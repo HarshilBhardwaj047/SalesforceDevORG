@@ -5,7 +5,7 @@ export default class HelloWorld extends LightningElement {
     contacts = [
         {
             Id: 1,
-            Name: 'Amy Taylor',
+            Name: 'Harshil Bhardwaj',
             Title: 'VP of Engineering',
         },
         {
