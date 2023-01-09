@@ -1,7 +1,7 @@
-public with sharing class AccountHandler {
+public class AccountHandler {
     public static Id insertNewAccount(String acctname) {
+        Account acct = new Account(Name = 'Devops');
         try {
-            Account acct = new Account(Name = 'Devops');
             insert acct;
             return (acct.Id);
         } catch (DMLException e) {
