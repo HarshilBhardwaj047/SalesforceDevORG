@@ -3,7 +3,7 @@ public class ContactSearch {
         try {
             List <Contact> cont = [SELECT Id, Name
                                    FROM Contact 
-                                   WHERE LastName =:lname and MailingPostalCode=: mcode]; 
+                                   WHERE LastName =:lname AND MailingPostalCode=: mcode]; 
                                    return cont;
             
         } catch (DMLException e) {
