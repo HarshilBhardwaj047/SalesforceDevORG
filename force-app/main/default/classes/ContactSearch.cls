@@ -1,5 +1,5 @@
 public class ContactSearch {
-    public static Lise<Contact> searchForContacts(String lname, String mcode) {
+    public static List<Contact> searchForContacts(String lname, String mcode) {
         try {
             List <Contact> cont = [SELECT Id, Name
                                    FROM Contact 
