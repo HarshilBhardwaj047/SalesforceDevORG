@@ -7,7 +7,7 @@ public class ContactSearch {
                                    return cont;
             
         } catch (DMLException e) {
-            System.debug('emopty string');
+            System.debug('empty string');
             return null;
         }
     }
