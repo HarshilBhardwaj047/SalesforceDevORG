@@ -1,14 +1,10 @@
 trigger ClosedOpportunityTrigger on Opportunity (after insert, after update) {
     List<Task> tasksToInsert = new List<Task>();
-    for (Opportunity opp : Trigger.new) {
-        if (opp.StageName == 'Closed Won') {
-            Task followUp = new Task();
-            followUp.Subject = 'Follow-up with ' + opp.Account.Name;
-            followUp.WhatId = opp.Id;
-            followUp.ActivityDate = Date.today().addDays(7);
-            followUp.Status = 'Not Started';
-            tasksToInsert.add(followUp);
-        }
+    for (Opportunity opp : [SELECT Id, StageName FROM Opportunity WHERE StageName = 'Closed Won' AND Id IN : Trigger.new]) {
+        tasksToInsert.add(new Task(Subject='Follow Up Test Task',WhatId = opp.Id));
     }
-    insert tasksToInsert;
+    if (tasksToInsert.size()>0) {
+        insert tasksToInsert;
+    }
+    
 }
