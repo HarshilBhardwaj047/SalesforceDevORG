@@ -1,5 +1,7 @@
-public with sharing class TestPageController {
-    public TestPageController() {
-
+global class TestPageController {
+    global Account[] accountList{
+        get{
+            return [SELECT Id, Name FROM Account];
+        }
     }
 }
