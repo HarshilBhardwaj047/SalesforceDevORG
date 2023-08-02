@@ -1,37 +1,33 @@
-import { LightningElement, wire, api, track } from 'lwc';
-import { subscribe, MessageContext } from 'lightning/messageService';
-import OPP_SELECTED_MESSAGE from '@salesforce/messageChannel/OpportunitySelected__c';
+// opportunityDetail.js
+import { LightningElement, wire, track } from 'lwc';
+import { CurrentPageReference } from 'lightning/navigation';
+import { registerListener, unregisterAllListeners } from 'c/pubsub';
 import getOpportunity from '@salesforce/apex/OpportunityController.getOpportunity';
 
-export default class OpportunityDetails extends LightningElement {
-    subscription = null;
+export default class OpportunityDetail extends LightningElement {
     @track opportunity;
-    @wire(MessageContext) messageContext;
+    @wire(CurrentPageReference) pageRef;
 
     connectedCallback() {
-        this.subscribeToMessageChannel();
+        registerListener('opportunitySelected', this.handleOpportunitySelected, this);
     }
 
-    subscribeToMessageChannel() {
-        if (!this.subscription) {
-            this.subscription = subscribe(
-                this.messageContext,
-                OPP_SELECTED_MESSAGE,
-                (message) => this.handleMessage(message)
-            );
-        }
+    disconnectedCallback() {
+        unregisterAllListeners(this);
     }
 
-    handleMessage(message) {
-        this.getOpportunityDetails(message.recordId);
+    handleOpportunitySelected(opportunityId) {
+        getOpportunity({ opportunityId })
+            .then(result => {
+                this.opportunity = result;
+            })
+            .catch(error => {
+                // Add error handling logic here
+                this.error = error;
+            });
     }
 
-    @wire(getOpportunity, { recordId: '$recordId' })
-    wiredOpportunity({ error, data }) {
-        if (data) {
-            this.opportunity = data;
-        } else if (error) {
-            // handle error
-        }
+    get opportunityData() {
+        return this.opportunity ? this.opportunity : null;
     }
 }
