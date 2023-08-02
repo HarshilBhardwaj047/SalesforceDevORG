@@ -6,7 +6,8 @@
                 onchange={handleCloseDateChange}></lightning-input>
             <lightning-combobox label="Stage" value={oppStage} options={stageOptions}
                 onchange={handleStageChange}></lightning-combobox>
-            <lightning-button label="Create Opportunity" onclick={createOpportunity} variant="brand"></lightning-button>
+            <lightning-button class="slds-m-top_medium" label="Create Opportunity" onclick={createOpportunity}
+                variant="brand"></lightning-button>
         </div>
     </lightning-card>
 </template>

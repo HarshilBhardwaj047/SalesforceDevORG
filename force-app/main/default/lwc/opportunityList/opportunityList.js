@@ -1,29 +1,49 @@
-import { LightningElement, wire, track } from 'lwc';
-import searchOpportunities from '@salesforce/apex/OpportunityController.searchOpportunities';
-import { publish, MessageContext } from 'lightning/messageService';
-import OPP_SELECTED_MESSAGE from '@salesforce/messageChannel/OpportunitySelected__c';
+// opportunityList.js
+import { LightningElement, track, wire } from 'lwc';
+import { CurrentPageReference } from 'lightning/navigation';
+import { fireEvent } from 'c/pubsub';
+import getOpportunitiesByKeyword from '@salesforce/apex/OpportunityController.getOpportunitiesByKeyword';
 
 export default class OpportunityList extends LightningElement {
-    @track searchKeyword = '';
     @track opportunities = [];
-    @wire(MessageContext) messageContext;
+    @track error;
 
-    @wire(searchOpportunities, { keyword: '$searchKeyword' })
-    wiredOpportunities({ error, data }) {
-        if (data) {
-            this.opportunities = data;
-        } else if (error) {
-            // handle error
-        }
+    columns = [
+        {
+            label: 'Opportunity name',
+            fieldName: 'Name',
+            type: 'button',
+            typeAttributes: {
+                label: { fieldName: 'Name' },
+                variant: 'base',
+                title: 'View Record',
+                name: 'view_record',
+            },
+        },
+        { label: 'Stage', fieldName: 'StageName' },
+        { label: 'Close Date', fieldName: 'CloseDate', type: 'date' },
+    ];
+
+    @wire(CurrentPageReference) pageRef;
+
+    connectedCallback() {
+        this.refreshData();
     }
 
-    handleSearch(event) {
-        this.searchKeyword = event.target.value;
+    refreshData() {
+        getOpportunitiesByKeyword()
+            .then(result => {
+                this.opportunities = result;
+                this.error = undefined;
+            })
+            .catch(error => {
+                this.error = error;
+                this.opportunities = undefined;
+            });
     }
 
-    handleClick(event) {
-        const oppId = event.target.dataset.id;
-        const payload = { recordId: oppId };
-        publish(this.messageContext, OPP_SELECTED_MESSAGE, payload);
+    handleRowAction(event) {
+        const row = event.detail.row;
+        fireEvent(this.pageRef, 'opportunitySelected', row.Id);
     }
 }
