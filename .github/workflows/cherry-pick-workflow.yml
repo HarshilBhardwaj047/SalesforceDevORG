@@ -68,12 +68,18 @@ jobs:
             commit_sha="${{ github.event.pull_request.head.sha }}"
           fi
           echo "Cherry‑picking commit $commit_sha into B"
-          # Attempt the cherry‑pick.  If conflicts occur, abort to avoid partial
-          # merges and fail the job.
-          if git cherry-pick -x "$commit_sha"; then
-            echo "Cherry‑pick succeeded."
+          # Attempt the cherry‑pick.  Use the recursive merge strategy with the
+          # `-X theirs` option to automatically resolve conflicts in favour of
+          # the incoming commit.  This leverages `git cherry-pick --strategy=recursive -X theirs`
+          # documented in Git merge strategies【901651621873494†L170-L178】【652661420902468†L20-L35】 to force the
+          # cherry‑pick by choosing the changes from the source commit whenever
+          # conflicts occur.  If even this forced strategy fails (e.g. due to
+          # unresolved conflicts), abort to avoid a partial state.
+          if git cherry-pick --strategy=recursive -X theirs -x "$commit_sha"; then
+            echo "Cherry‑pick succeeded using recursive strategy with -X theirs."
           else
-            echo "Conflict detected during cherry‑pick.  Aborting…" >&2
+            echo "Conflict detected during forced cherry‑pick.  Aborting…" >&2
+            # Abort to reset the working directory and index back to the pre-pick state
             git cherry-pick --abort
             exit 1
           fi
