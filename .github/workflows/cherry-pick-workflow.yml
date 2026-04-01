@@ -1,0 +1,83 @@
+# This GitHub Actions workflow cherry‑picks pull requests that are merged into branch
+# A and have titles starting with "Cherry" into branch B automatically.  When a pull
+# request targeting branch A is closed (merged), the job checks if the PR was
+# actually merged and if its title starts with the prefix "Cherry".  If both
+# conditions are met, it checks out branch B, cherry‑picks the merge (or squash)
+# commit from the PR, and pushes the result back to the remote branch B.
+
+name: cherry‑pick Cherry‑prefixed PRs to branch B
+
+on:
+  # Trigger on pull requests that are closed (merged or closed without merge).
+  pull_request:
+    types: [closed]
+    # Only watch pull requests whose base branch is A.
+    branches:
+      - A
+
+jobs:
+  cherry_pick:
+    # Only run if the pull request was merged AND its title starts with "Cherry".
+    if: ${{ github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, 'Cherry') }}
+    runs-on: ubuntu-latest
+    permissions:
+      # Grant write permissions so the workflow can push to the repository.
+      contents: write
+
+    steps:
+      - name: Checkout repository with full history
+        uses: actions/checkout@v3
+        with:
+          # A full fetch is required so that cherry‑picking works correctly.
+          fetch-depth: 0
+          # Use the GITHUB_TOKEN to authenticate against the repository.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git user
+        run: |
+          git config --global user.name "${{ github.actor }}"
+          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+
+      - name: Prepare target branch
+        run: |
+          # Fetch remote branches and create a local copy of B if it does not exist.
+          git fetch origin
+          if git show-ref --verify --quiet refs/heads/B; then
+            echo "Local branch B exists."
+          else
+            # Create B from origin/B if it exists or from current HEAD otherwise.
+            if git ls-remote --exit-code --heads origin B; then
+              git checkout -b B origin/B
+            else
+              # If B doesn’t exist remotely, create it from branch A’s latest state.
+              git checkout -b B origin/A
+              git push --set-upstream origin B
+            fi
+          fi
+
+      - name: Cherry‑pick the merged commit into B
+        run: |
+          # Switch to B
+          git checkout B
+          # Determine the commit to cherry‑pick.  When a PR is merged as a
+          # merge commit or squash commit, merge_commit_sha contains the commit
+          # on the base branch.  For rebased merges, fall back to the PR head.
+          commit_sha="${{ github.event.pull_request.merge_commit_sha }}"
+          if [ -z "$commit_sha" ]; then
+            echo "merge_commit_sha is empty, using head SHA instead."
+            commit_sha="${{ github.event.pull_request.head.sha }}"
+          fi
+          echo "Cherry‑picking commit $commit_sha into B"
+          # Attempt the cherry‑pick.  If conflicts occur, abort to avoid partial
+          # merges and fail the job.
+          if git cherry-pick -x "$commit_sha"; then
+            echo "Cherry‑pick succeeded."
+          else
+            echo "Conflict detected during cherry‑pick.  Aborting…" >&2
+            git cherry-pick --abort
+            exit 1
+          fi
+
+      - name: Push changes to B
+        run: |
+          git push origin B
