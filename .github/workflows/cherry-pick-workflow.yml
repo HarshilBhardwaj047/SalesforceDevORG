@@ -55,48 +55,53 @@ jobs:
             fi
           fi
 
-      - name: Cherry‑pick the merged commit into B
+      - name: Cherry‑pick pull request commits into target branch
         run: |
-          # Switch to B
-          git checkout B
-          # Determine the commit to cherry‑pick.  When a PR is merged as a
-          # merge commit or squash commit, merge_commit_sha contains the commit
-          # on the base branch.  For rebased merges, fall back to the PR head.
-          commit_sha="${{ github.event.pull_request.merge_commit_sha }}"
-          if [ -z "$commit_sha" ]; then
-            echo "merge_commit_sha is empty, using head SHA instead."
-            commit_sha="${{ github.event.pull_request.head.sha }}"
-          fi
-          echo "Cherry‑picking commit $commit_sha into B"
-          # Attempt the cherry‑pick.  Use the recursive merge strategy with the
-          # `-X theirs` option to automatically resolve conflicts in favour of
-          # the incoming commit.  This leverages `git cherry-pick --strategy=recursive -X theirs`
-          # documented in Git merge strategies【901651621873494†L170-L178】【652661420902468†L20-L35】 to force the
-          # cherry‑pick by choosing the changes from the source commit whenever
-          # conflicts occur.  If even this forced strategy fails (e.g. due to
-          # unresolved conflicts), abort to avoid a partial state.
-          # Determine if the commit is a merge commit.  If it has multiple parents,
-          # take the second parent (which represents the head of the feature branch)
-          # instead of the merge commit itself.  This ensures we cherry‑pick the
-          # actual changes from the pull request rather than the merge commit.
-          parents=$(git show -s --format=%P "$commit_sha")
-          parent_count=$(echo "$parents" | wc -w)
-          if [ "$parent_count" -gt 1 ]; then
-            parent2=$(echo "$parents" | awk '{print $2}')
-            echo "Commit $commit_sha is a merge commit; using second parent $parent2 for cherry-pick."
-            commit_sha="$parent2"
-          fi
+          set -euo pipefail
 
-          # Perform the cherry‑pick.  We do not specify -m since we are now using a
-          # non‑merge commit.  If conflicts occur, abort and fail the job.
-          if git cherry-pick --strategy=recursive -X theirs -x "$commit_sha"; then
-            echo "Cherry‑pick succeeded using recursive strategy with -X theirs."
+          # Identify the base branch (A) and the head branch (source of PR) from the event
+          base_branch="${{ github.event.pull_request.base.ref }}"
+          source_branch="${{ github.event.pull_request.head.ref }}"
+          target_branch="B"
+
+          echo "Base branch: $base_branch"
+          echo "Source branch: $source_branch"
+          echo "Target branch: $target_branch"
+
+          # Ensure we have the latest history for all branches
+          git fetch origin
+
+          # Check out the target branch locally (create if missing)
+          if git show-ref --verify --quiet refs/heads/$target_branch; then
+            git checkout $target_branch
+            git pull origin $target_branch
           else
-            echo "Conflict detected during forced cherry‑pick.  Aborting…" >&2
-            git cherry-pick --abort
-            exit 1
+            # Create target branch from base branch if it doesn't exist
+            git checkout -b $target_branch origin/$base_branch
           fi
 
-      - name: Push changes to B
+          # Fetch the full source branch to ensure we have all its commits
+          git fetch origin $source_branch:$source_branch
+
+          # Determine the list of commits that are in the source branch but not in the base branch.
+          # We use --reverse to apply commits in chronological order and exclude merge commits.
+          commit_list=$(git rev-list --reverse --no-merges origin/$source_branch ^origin/$base_branch)
+
+          echo "Commits to cherry‑pick: $commit_list"
+
+          # Loop through each commit and cherry‑pick it with the recursive merge strategy.
+          # If a cherry‑pick fails, abort and exit with a non-zero status so the job fails.
+          for sha in $commit_list; do
+            echo "Cherry‑picking $sha into $target_branch"
+            if git cherry-pick --strategy=recursive -X theirs -x "$sha"; then
+              echo "Successfully cherry‑picked $sha."
+            else
+              echo "Conflict detected while cherry‑picking $sha. Aborting…" >&2
+              git cherry-pick --abort
+              exit 1
+            fi
+          done
+
+      - name: Push changes to target branch
         run: |
           git push origin B
