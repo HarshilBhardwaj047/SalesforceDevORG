@@ -1,24 +1,26 @@
-# This GitHub Actions workflow cherry‑picks pull requests that are merged into branch
-# A and have titles starting with "Cherry" into branch B automatically.  When a pull
-# request targeting branch A is closed (merged), the job checks if the PR was
-# actually merged and if its title starts with the prefix "Cherry".  If both
-# conditions are met, it checks out branch B, cherry‑picks the merge (or squash)
-# commit from the PR, and pushes the result back to the remote branch B.
+# This GitHub Actions workflow cherry‑picks the changes from pull requests targeting
+# branch A whose titles start with "Cherry" into branch B automatically.  It triggers
+# as soon as a qualifying pull request is opened or updated (synchronized) instead of
+# waiting for the pull request to be merged.  The workflow checks out branch B,
+# determines which commits are present on the pull request's source branch but not on
+# the base branch (A), and cherry‑picks each of those commits into B, resolving
+# conflicts in favour of the incoming changes.  The updated branch B is then
+# pushed back to the repository.
 
 name: cherry‑pick Cherry‑prefixed PRs to branch B
 
 on:
-  # Trigger on pull requests that are closed (merged or closed without merge).
+  # Trigger on pull requests when they are opened or updated (synchronize) and target branch A.
   pull_request:
-    types: [closed]
-    # Only watch pull requests whose base branch is A.
+    types: [opened, synchronize]
     branches:
       - A
 
 jobs:
   cherry_pick:
-    # Only run if the pull request was merged AND its title starts with "Cherry".
-    if: ${{ github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, 'Cherry') }}
+    # Only run when the PR title starts with "Cherry".  We no longer require the PR to be merged,
+    # so this workflow triggers on open and synchronize events for qualifying PRs.
+    if: ${{ startsWith(github.event.pull_request.title, 'Cherry') }}
     runs-on: ubuntu-latest
     permissions:
       # Grant write permissions so the workflow can push to the repository.
