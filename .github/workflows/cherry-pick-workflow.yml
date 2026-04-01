@@ -13,7 +13,6 @@ permissions:
 
 jobs:
   cherry-pick:
-    # Only run if the PR was actually merged AND title starts with "Cherry"
     if: |
       github.event.pull_request.merged == true &&
       startsWith(github.event.pull_request.title, 'Cherry')
@@ -21,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      TARGET_BRANCH: B                             # 👈 Change this to your target branch name
+      TARGET_BRANCH: B
       PR_NUMBER: ${{ github.event.pull_request.number }}
       PR_TITLE: ${{ github.event.pull_request.title }}
       MERGE_COMMIT: ${{ github.event.pull_request.merge_commit_sha }}
@@ -31,7 +30,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0                           # Full history required for cherry-pick
+          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
@@ -45,48 +44,52 @@ jobs:
       - name: Cherry-pick onto target branch
         id: cherry_pick
         run: |
-          echo "🍒 Cherry-picking PR #${PR_NUMBER}: '${PR_TITLE}'"
+          set -euo pipefail
+
+          echo "🍒 PR #${PR_NUMBER}: '${PR_TITLE}'"
           echo "   Commit : ${MERGE_COMMIT}"
           echo "   Target : ${TARGET_BRANCH}"
 
           git checkout "${TARGET_BRANCH}"
           git pull origin "${TARGET_BRANCH}"
 
-          # ── Detect whether this is a merge commit ─────────────────────────────
-          PARENT_COUNT=$(git cat-file -p "${MERGE_COMMIT}" | grep -c '^parent ')
+          # Count parents — || true prevents grep exit-code 1 (0 matches) from
+          # killing the script when pipefail is active.
+          PARENT_COUNT=$(git cat-file -p "${MERGE_COMMIT}" | grep -c '^parent ' || true)
           echo "   Parent count: ${PARENT_COUNT}"
 
+          # ── Attempt the cherry-pick ──────────────────────────────────────────
+          PICK_OK=false
           if [ "${PARENT_COUNT}" -gt 1 ]; then
-            # Merge commit → must supply -m 1 (use branch-A side as mainline)
-            CHERRY_CMD="git cherry-pick -m 1 ${MERGE_COMMIT}"
+            echo "   Merge commit detected → using -m 1"
+            git cherry-pick -m 1 "${MERGE_COMMIT}" && PICK_OK=true || true
           else
-            # Regular / squash commit → no -m flag needed
-            CHERRY_CMD="git cherry-pick ${MERGE_COMMIT}"
+            echo "   Regular/squash commit → no -m flag"
+            git cherry-pick "${MERGE_COMMIT}"        && PICK_OK=true || true
           fi
 
-          echo "   Running: ${CHERRY_CMD}"
-
-          # ── Run cherry-pick ───────────────────────────────────────────────────
-          if ${CHERRY_CMD}; then
+          # ── Handle outcome ───────────────────────────────────────────────────
+          if [ "${PICK_OK}" = "true" ]; then
             echo "status=success" >> "${GITHUB_OUTPUT}"
             echo "✅ Cherry-pick succeeded."
           else
             echo "status=conflict" >> "${GITHUB_OUTPUT}"
-            echo "⚠️  Cherry-pick produced conflicts — aborting."
+            echo "⚠️  Cherry-pick failed."
 
-            # Only abort if a cherry-pick is actually in progress
+            # Abort only when a cherry-pick is actually in progress
             if git rev-parse CHERRY_PICK_HEAD > /dev/null 2>&1; then
               git cherry-pick --abort
+              echo "   Aborted cleanly."
             else
-              echo "   Nothing to abort (cherry-pick failed before writing CHERRY_PICK_HEAD)."
+              echo "   No in-progress pick to abort."
             fi
           fi
 
-      - name: Push to target branch (success)
+      - name: Push to target branch
         if: steps.cherry_pick.outputs.status == 'success'
         run: |
           git push origin "${TARGET_BRANCH}"
-          echo "🚀 Pushed cherry-pick to ${TARGET_BRANCH}"
+          echo "🚀 Pushed to ${TARGET_BRANCH}"
 
       - name: Comment on PR — success
         if: steps.cherry_pick.outputs.status == 'success'
@@ -99,22 +102,19 @@ jobs:
         if: steps.cherry_pick.outputs.status == 'conflict'
         run: |
           gh pr comment "${PR_NUMBER}" --body \
-            "⚠️ **Cherry-pick failed — manual intervention needed.**
+            "⚠️ **Cherry-pick failed — manual steps needed.**
 
-            Could not automatically apply \`${MERGE_COMMIT}\` onto \`${TARGET_BRANCH}\`.
-
-            Run these commands locally to resolve:
             \`\`\`bash
             git fetch origin
             git checkout ${TARGET_BRANCH}
             git pull origin ${TARGET_BRANCH}
             git cherry-pick -m 1 ${MERGE_COMMIT}
-            # Fix conflicts, then:
+            # resolve conflicts, then:
             git add .
             git cherry-pick --continue
             git push origin ${TARGET_BRANCH}
             \`\`\`"
 
-      - name: Fail the job on conflict
+      - name: Fail job on conflict
         if: steps.cherry_pick.outputs.status == 'conflict'
         run: exit 1
