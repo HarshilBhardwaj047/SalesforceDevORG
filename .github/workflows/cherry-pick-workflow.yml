@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      TARGET_BRANCH: B
+      TARGET_BRANCH: B                             # 👈 Change this to your target branch name
       PR_NUMBER: ${{ github.event.pull_request.number }}
       PR_TITLE: ${{ github.event.pull_request.title }}
       MERGE_COMMIT: ${{ github.event.pull_request.merge_commit_sha }}
@@ -44,52 +44,46 @@ jobs:
       - name: Cherry-pick onto target branch
         id: cherry_pick
         run: |
-          set -euo pipefail
-
-          echo "🍒 PR #${PR_NUMBER}: '${PR_TITLE}'"
-          echo "   Commit : ${MERGE_COMMIT}"
-          echo "   Target : ${TARGET_BRANCH}"
+          echo "PR #${PR_NUMBER}: '${PR_TITLE}'"
+          echo "Commit : ${MERGE_COMMIT}"
+          echo "Target : ${TARGET_BRANCH}"
 
           git checkout "${TARGET_BRANCH}"
           git pull origin "${TARGET_BRANCH}"
 
-          # Count parents — || true prevents grep exit-code 1 (0 matches) from
-          # killing the script when pipefail is active.
-          PARENT_COUNT=$(git cat-file -p "${MERGE_COMMIT}" | grep -c '^parent ' || true)
-          echo "   Parent count: ${PARENT_COUNT}"
+          # %P prints all parent SHAs space-separated; wc -w counts them.
+          # This works on any already-fetched commit without grep exit-code issues.
+          PARENT_COUNT=$(git log --pretty=format:'%P' -n 1 "${MERGE_COMMIT}" | wc -w)
+          echo "Parent count: ${PARENT_COUNT}"
 
-          # ── Attempt the cherry-pick ──────────────────────────────────────────
           PICK_OK=false
+
           if [ "${PARENT_COUNT}" -gt 1 ]; then
-            echo "   Merge commit detected → using -m 1"
-            git cherry-pick -m 1 "${MERGE_COMMIT}" && PICK_OK=true || true
+            echo "Merge commit — running: git cherry-pick -m 1 ${MERGE_COMMIT}"
+            git cherry-pick -m 1 "${MERGE_COMMIT}" && PICK_OK=true || PICK_OK=false
           else
-            echo "   Regular/squash commit → no -m flag"
-            git cherry-pick "${MERGE_COMMIT}"        && PICK_OK=true || true
+            echo "Regular commit — running: git cherry-pick ${MERGE_COMMIT}"
+            git cherry-pick "${MERGE_COMMIT}" && PICK_OK=true || PICK_OK=false
           fi
 
-          # ── Handle outcome ───────────────────────────────────────────────────
           if [ "${PICK_OK}" = "true" ]; then
             echo "status=success" >> "${GITHUB_OUTPUT}"
-            echo "✅ Cherry-pick succeeded."
+            echo "Cherry-pick succeeded."
           else
             echo "status=conflict" >> "${GITHUB_OUTPUT}"
-            echo "⚠️  Cherry-pick failed."
+            echo "Cherry-pick failed."
 
-            # Abort only when a cherry-pick is actually in progress
             if git rev-parse CHERRY_PICK_HEAD > /dev/null 2>&1; then
               git cherry-pick --abort
-              echo "   Aborted cleanly."
+              echo "Aborted cleanly."
             else
-              echo "   No in-progress pick to abort."
+              echo "No in-progress pick to abort."
             fi
           fi
 
       - name: Push to target branch
         if: steps.cherry_pick.outputs.status == 'success'
-        run: |
-          git push origin "${TARGET_BRANCH}"
-          echo "🚀 Pushed to ${TARGET_BRANCH}"
+        run: git push origin "${TARGET_BRANCH}"
 
       - name: Comment on PR — success
         if: steps.cherry_pick.outputs.status == 'success'
