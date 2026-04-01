@@ -75,8 +75,24 @@ jobs:
           # cherry‑pick by choosing the changes from the source commit whenever
           # conflicts occur.  If even this forced strategy fails (e.g. due to
           # unresolved conflicts), abort to avoid a partial state.
-          if git cherry-pick --strategy=recursive -X theirs -x "$commit_sha"; then
-            echo "Cherry‑pick succeeded using recursive strategy with -X theirs."
+          # Determine if the commit is a merge commit with multiple parents.  Git
+          # requires the -m <parent-number> option to cherry‑pick merge commits;
+          # without specifying a mainline, cherry‑pick will fail with an error
+          # like "is a merge but no -m option was given".  We choose the first
+          # parent (mainline 1) so that the patch applies the changes relative to
+          # the base branch of the pull request.
+          parents=$(git show -s --format=%P "$commit_sha")
+          parent_count=$(echo "$parents" | wc -w)
+          pick_opts=""
+          if [ "$parent_count" -gt 1 ]; then
+            echo "Commit $commit_sha is a merge commit; using -m 1 for cherry-pick."
+            pick_opts="-m 1"
+          fi
+
+          # Run the cherry‑pick with the computed options.  We use eval here so
+          # that $pick_opts expands correctly when empty.
+          if eval git cherry-pick --strategy=recursive -X theirs $pick_opts -x "$commit_sha"; then
+            echo "Cherry‑pick succeeded using recursive strategy with -X theirs."          
           else
             echo "Conflict detected during forced cherry‑pick.  Aborting…" >&2
             # Abort to reset the working directory and index back to the pre-pick state
