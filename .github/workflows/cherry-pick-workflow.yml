@@ -1,102 +1,96 @@
-# This GitHub Actions workflow cherry‑picks pull requests that are merged into branch
-# A and have titles starting with "Cherry" into branch B automatically.  When a pull
-# request targeting branch A is closed (merged), the job checks if the PR was
-# actually merged and if its title starts with the prefix "Cherry".  If both
-# conditions are met, it checks out branch B, cherry‑picks the merge (or squash)
-# commit from the PR, and pushes the result back to the remote branch B.
-
-name: cherry‑pick Cherry‑prefixed PRs to branch B
+name: Auto Cherry-Pick PRs to Branch B
 
 on:
-  # Trigger on pull requests that are closed (merged or closed without merge).
   pull_request:
-    types: [closed]
-    # Only watch pull requests whose base branch is A.
+    types:
+      - closed
     branches:
-      - A
+      - A   # 👈 Change this to your source branch name
+
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
-  cherry_pick:
-    # Only run if the pull request was merged AND its title starts with "Cherry".
-    if: ${{ github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, 'Cherry') }}
+  cherry-pick:
+    # Only run if the PR was actually merged (not just closed) AND title starts with "Cherry"
+    if: |
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.title, 'Cherry')
+
     runs-on: ubuntu-latest
-    permissions:
-      # Grant write permissions so the workflow can push to the repository.
-      contents: write
+
+    env:
+      TARGET_BRANCH: B            # 👈 Change this to your target branch name
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      MERGE_COMMIT: ${{ github.event.pull_request.merge_commit_sha }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - name: Checkout repository with full history
-        uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          # A full fetch is required so that cherry‑picking works correctly.
-          fetch-depth: 0
-          # Use the GITHUB_TOKEN to authenticate against the repository.
+          fetch-depth: 0                 # Full history needed for cherry-pick
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure Git user
+      - name: Configure Git
         run: |
-          git config --global user.name "${{ github.actor }}"
-          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Prepare target branch
+      - name: Fetch all branches
+        run: git fetch --all
+
+      - name: Cherry-pick merge commit onto target branch
+        id: cherry_pick
         run: |
-          # Fetch remote branches and create a local copy of B if it does not exist.
-          git fetch origin
-          if git show-ref --verify --quiet refs/heads/B; then
-            echo "Local branch B exists."
+          echo "🍒 Cherry-picking PR #$PR_NUMBER: '$PR_TITLE'"
+          echo "   Merge commit : $MERGE_COMMIT"
+          echo "   Target branch: $TARGET_BRANCH"
+
+          git checkout "$TARGET_BRANCH"
+          git pull origin "$TARGET_BRANCH"
+
+          # -m 1 selects the first parent (the target branch line) as mainline,
+          # which is required when cherry-picking a merge commit.
+          if git cherry-pick -m 1 "$MERGE_COMMIT"; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+            echo "✅ Cherry-pick succeeded."
           else
-            # Create B from origin/B if it exists or from current HEAD otherwise.
-            if git ls-remote --exit-code --heads origin B; then
-              git checkout -b B origin/B
-            else
-              # If B doesn’t exist remotely, create it from branch A’s latest state.
-              git checkout -b B origin/A
-              git push --set-upstream origin B
-            fi
+            echo "status=conflict" >> "$GITHUB_OUTPUT"
+            echo "⚠️  Cherry-pick produced conflicts."
+            git cherry-pick --abort || true
           fi
 
-      - name: Cherry‑pick the merged commit into B
+      - name: Push to target branch (success path)
+        if: steps.cherry_pick.outputs.status == 'success'
         run: |
-          # Switch to B
-          git checkout B
-          # Determine the commit to cherry‑pick.  When a PR is merged as a
-          # merge commit or squash commit, merge_commit_sha contains the commit
-          # on the base branch.  For rebased merges, fall back to the PR head.
-          commit_sha="${{ github.event.pull_request.merge_commit_sha }}"
-          if [ -z "$commit_sha" ]; then
-            echo "merge_commit_sha is empty, using head SHA instead."
-            commit_sha="${{ github.event.pull_request.head.sha }}"
-          fi
-          echo "Cherry‑picking commit $commit_sha into B"
-          # Attempt the cherry‑pick.  Use the recursive merge strategy with the
-          # `-X theirs` option to automatically resolve conflicts in favour of
-          # the incoming commit.  This leverages `git cherry-pick --strategy=recursive -X theirs`
-          # documented in Git merge strategies【901651621873494†L170-L178】【652661420902468†L20-L35】 to force the
-          # cherry‑pick by choosing the changes from the source commit whenever
-          # conflicts occur.  If even this forced strategy fails (e.g. due to
-          # unresolved conflicts), abort to avoid a partial state.
-          # Determine if the commit is a merge commit.  If it has multiple parents,
-          # take the second parent (which represents the head of the feature branch)
-          # instead of the merge commit itself.  This ensures we cherry‑pick the
-          # actual changes from the pull request rather than the merge commit.
-          parents=$(git show -s --format=%P "$commit_sha")
-          parent_count=$(echo "$parents" | wc -w)
-          if [ "$parent_count" -gt 1 ]; then
-            parent2=$(echo "$parents" | awk '{print $2}')
-            echo "Commit $commit_sha is a merge commit; using second parent $parent2 for cherry-pick."
-            commit_sha="$parent2"
-          fi
+          git push origin "$TARGET_BRANCH"
+          echo "🚀 Pushed cherry-pick to $TARGET_BRANCH"
 
-          # Perform the cherry‑pick.  We do not specify -m since we are now using a
-          # non‑merge commit.  If conflicts occur, abort and fail the job.
-          if git cherry-pick --strategy=recursive -X theirs -x "$commit_sha"; then
-            echo "Cherry‑pick succeeded using recursive strategy with -X theirs."
-          else
-            echo "Conflict detected during forced cherry‑pick.  Aborting…" >&2
-            git cherry-pick --abort
-            exit 1
-          fi
-
-      - name: Push changes to B
+      - name: Comment on PR — success
+        if: steps.cherry_pick.outputs.status == 'success'
         run: |
-          git push origin B
+          gh pr comment "$PR_NUMBER" --body \
+            "✅ **Cherry-pick succeeded!**
+            Merge commit \`$MERGE_COMMIT\` has been automatically cherry-picked onto \`$TARGET_BRANCH\`."
+
+      - name: Comment on PR — conflict
+        if: steps.cherry_pick.outputs.status == 'conflict'
+        run: |
+          gh pr comment "$PR_NUMBER" --body \
+            "⚠️ **Cherry-pick failed due to conflicts.**
+            Could not automatically apply \`$MERGE_COMMIT\` onto \`$TARGET_BRANCH\`.
+            Please cherry-pick this commit manually and resolve the conflicts:
+            \`\`\`bash
+            git checkout $TARGET_BRANCH
+            git cherry-pick -m 1 $MERGE_COMMIT
+            # resolve conflicts, then:
+            git cherry-pick --continue
+            git push origin $TARGET_BRANCH
+            \`\`\`"
+
+      - name: Fail job if cherry-pick had conflicts
+        if: steps.cherry_pick.outputs.status == 'conflict'
+        run: exit 1
