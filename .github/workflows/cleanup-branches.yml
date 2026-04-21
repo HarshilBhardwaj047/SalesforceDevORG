@@ -1,0 +1,193 @@
+name: Cleanup Stale Branches
+
+on:
+  schedule:
+    # Runs every Sunday at 2:00 AM UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (only log, do not delete)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      days_old:
+        description: 'Delete branches older than X days'
+        required: false
+        default: '60'
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  cleanup:
+    name: Delete stale and merged branches
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Delete stale and merged branches
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const DAYS_OLD = parseInt('${{ github.event.inputs.days_old || 60 }}', 10);
+            const DRY_RUN = '${{ github.event.inputs.dry_run || 'false' }}' === 'true';
+
+            // Branches that should NEVER be deleted, even if stale
+            const PROTECTED_BRANCHES = [
+              'main',
+              'master',
+              'develop',
+              'development',
+              'staging',
+              'production',
+              'prod',
+              'release',
+            ];
+
+            // Optional regex patterns for branches to always keep
+            // e.g. release/*, hotfix/*, v1.x, etc.
+            const PROTECTED_PATTERNS = [
+              /^release\/.*/,
+              /^hotfix\/.*/,
+              /^v\d+(\.\d+)*(\.x)?$/,
+            ];
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const now = new Date();
+            const cutoffDate = new Date(now.getTime() - DAYS_OLD * 24 * 60 * 60 * 1000);
+
+            core.info(`Cutoff date: ${cutoffDate.toISOString()}`);
+            core.info(`Dry run: ${DRY_RUN}`);
+
+            // Fetch branch protection info from the repository settings
+            let repoProtectedBranches = new Set();
+            try {
+              const branches = await github.paginate(
+                github.rest.repos.listBranches,
+                { owner, repo, protected: true, per_page: 100 }
+              );
+              branches.forEach(b => repoProtectedBranches.add(b.name));
+              core.info(`Repo-protected branches: ${[...repoProtectedBranches].join(', ') || 'none'}`);
+            } catch (err) {
+              core.warning(`Could not fetch protected branches: ${err.message}`);
+            }
+
+            const isProtected = (name) => {
+              if (PROTECTED_BRANCHES.includes(name)) return true;
+              if (repoProtectedBranches.has(name)) return true;
+              if (PROTECTED_PATTERNS.some(re => re.test(name))) return true;
+              return false;
+            };
+
+            // Get all branches
+            const allBranches = await github.paginate(
+              github.rest.repos.listBranches,
+              { owner, repo, per_page: 100 }
+            );
+            core.info(`Total branches found: ${allBranches.length}`);
+
+            // Get all PRs (merged + closed) so we can map head branches → PR state
+            const allPulls = await github.paginate(
+              github.rest.pulls.list,
+              { owner, repo, state: 'closed', per_page: 100 }
+            );
+
+            const branchPRMap = new Map();
+            for (const pr of allPulls) {
+              if (!pr.head || pr.head.repo?.full_name !== `${owner}/${repo}`) continue;
+              const existing = branchPRMap.get(pr.head.ref);
+              // Prefer merged PRs when tracking state
+              if (!existing || (pr.merged_at && !existing.merged_at)) {
+                branchPRMap.set(pr.head.ref, pr);
+              }
+            }
+
+            const deleted = [];
+            const skipped = [];
+            const kept = [];
+
+            for (const branch of allBranches) {
+              const name = branch.name;
+
+              if (isProtected(name)) {
+                skipped.push({ name, reason: 'protected' });
+                continue;
+              }
+
+              // Get the last commit date
+              let commitDate;
+              try {
+                const { data: commit } = await github.rest.repos.getCommit({
+                  owner, repo, ref: branch.commit.sha,
+                });
+                commitDate = new Date(
+                  commit.commit.committer?.date || commit.commit.author?.date
+                );
+              } catch (err) {
+                core.warning(`Could not fetch commit for ${name}: ${err.message}`);
+                skipped.push({ name, reason: 'commit fetch failed' });
+                continue;
+              }
+
+              const pr = branchPRMap.get(name);
+              const isStale = commitDate < cutoffDate;
+              const isMerged = pr && pr.merged_at;
+              const isClosed = pr && !pr.merged_at && pr.state === 'closed';
+
+              let reason = null;
+              if (isMerged) reason = `PR #${pr.number} merged`;
+              else if (isClosed) reason = `PR #${pr.number} closed without merge`;
+              else if (isStale) reason = `stale (last commit ${commitDate.toISOString().split('T')[0]})`;
+
+              if (!reason) {
+                kept.push({ name, lastCommit: commitDate.toISOString().split('T')[0] });
+                continue;
+              }
+
+              if (DRY_RUN) {
+                core.info(`[DRY RUN] Would delete "${name}" — ${reason}`);
+                deleted.push({ name, reason, dryRun: true });
+                continue;
+              }
+
+              try {
+                await github.rest.git.deleteRef({
+                  owner, repo, ref: `heads/${name}`,
+                });
+                core.info(`Deleted "${name}" — ${reason}`);
+                deleted.push({ name, reason });
+              } catch (err) {
+                core.warning(`Failed to delete "${name}": ${err.message}`);
+                skipped.push({ name, reason: `delete failed: ${err.message}` });
+              }
+            }
+
+            // Summary
+            await core.summary
+              .addHeading('Branch Cleanup Summary')
+              .addRaw(`**Mode:** ${DRY_RUN ? 'Dry Run' : 'Live'}\n\n`)
+              .addRaw(`**Cutoff:** ${cutoffDate.toISOString().split('T')[0]} (${DAYS_OLD} days)\n\n`)
+              .addHeading(`Deleted (${deleted.length})`, 3)
+              .addTable([
+                [{ data: 'Branch', header: true }, { data: 'Reason', header: true }],
+                ...deleted.map(d => [d.name, d.reason]),
+              ])
+              .addHeading(`Skipped (${skipped.length})`, 3)
+              .addTable([
+                [{ data: 'Branch', header: true }, { data: 'Reason', header: true }],
+                ...skipped.map(s => [s.name, s.reason]),
+              ])
+              .addHeading(`Kept (${kept.length})`, 3)
+              .write();
