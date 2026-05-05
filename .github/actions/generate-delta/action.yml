@@ -1,0 +1,55 @@
+name: Generate Delta Package
+description: Uses sfdx-git-delta to generate a delta package between two commits
+inputs:
+  from_sha:
+    description: Starting commit SHA
+    required: true
+  to_sha:
+    description: Ending commit SHA
+    required: true
+outputs:
+  nothing_to_deploy:
+    description: 'true if delta package.xml is empty'
+    value: ${{ steps.check.outputs.nothing_to_deploy }}
+  summary:
+    description: Short human-readable summary of the delta
+    value: ${{ steps.check.outputs.summary }}
+
+runs:
+  using: composite
+  steps:
+    - name: Generate delta
+      shell: bash
+      run: |
+        rm -rf delta
+        mkdir -p delta
+        sf sgd source delta \
+          --from "${{ inputs.from_sha }}" \
+          --to "${{ inputs.to_sha }}" \
+          --output-dir delta \
+          --generate-delta \
+          --source-dir force-app
+
+    - name: Check delta
+      id: check
+      shell: bash
+      run: |
+        if [ ! -f delta/package/package.xml ]; then
+          echo "No package.xml generated"
+          echo "nothing_to_deploy=true" >> "$GITHUB_OUTPUT"
+          echo "summary=No metadata changes" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # Count <types> blocks (rough proxy for metadata types changed)
+        TYPES=$(grep -c "<name>" delta/package/package.xml || echo 0)
+        MEMBERS=$(grep -c "<members>" delta/package/package.xml || echo 0)
+
+        if [ "$MEMBERS" -eq 0 ]; then
+          echo "nothing_to_deploy=true" >> "$GITHUB_OUTPUT"
+          echo "summary=Delta package empty" >> "$GITHUB_OUTPUT"
+        else
+          echo "nothing_to_deploy=false" >> "$GITHUB_OUTPUT"
+          echo "summary=$MEMBERS components across $TYPES metadata types" >> "$GITHUB_OUTPUT"
+        fi
+        cat delta/package/package.xml

@@ -1,10 +1,22 @@
-<!-- opportunityList.html -->
 <template>
-    <lightning-card title="Opportunity List">
+    <lightning-card title="Opportunity List" icon-name="standard:opportunity">
         <div class="slds-p-around_medium">
-            <lightning-input type="search" onchange={handleSearch} label="Filter by Name"
-                class="slds-m-bottom_small"></lightning-input>
-            <lightning-datatable data={opportunities} columns={columns} key-field="id"></lightning-datatable>
+            <lightning-input
+                type="search"
+                onchange={handleSearch}
+                label="Filter by Name"
+                class="slds-m-bottom_small">
+            </lightning-input>
+            <template if:true={error}>
+                <p class="slds-text-color_error">Failed to load opportunities.</p>
+            </template>
+            <lightning-datatable
+                data={opportunities}
+                columns={columns}
+                key-field="Id"
+                onrowaction={handleRowAction}
+                hide-checkbox-column>
+            </lightning-datatable>
         </div>
     </lightning-card>
 </template>

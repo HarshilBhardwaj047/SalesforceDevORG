@@ -1,0 +1,40 @@
+name: Salesforce JWT Login
+description: Authenticates the SF CLI to a Salesforce org using JWT Bearer Flow
+inputs:
+  client_id:
+    description: Connected App Consumer Key
+    required: true
+  jwt_key:
+    description: Private key PEM contents
+    required: true
+  username:
+    description: Salesforce username
+    required: true
+  login_url:
+    description: 'https://login.salesforce.com or https://test.salesforce.com'
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Write JWT key to disk
+      shell: bash
+      run: |
+        umask 077
+        echo "${{ inputs.jwt_key }}" > /tmp/server.key
+        chmod 600 /tmp/server.key
+
+    - name: JWT auth
+      shell: bash
+      run: |
+        sf org login jwt \
+          --client-id "${{ inputs.client_id }}" \
+          --jwt-key-file /tmp/server.key \
+          --username "${{ inputs.username }}" \
+          --instance-url "${{ inputs.login_url }}" \
+          --alias ci-org \
+          --set-default
+
+    - name: Cleanup key
+      if: always()
+      shell: bash
+      run: rm -f /tmp/server.key

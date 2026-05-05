@@ -1,0 +1,139 @@
+name: Reusable - Deploy Salesforce
+
+# Reusable workflow that performs the actual deployment. Uses quick-deploy
+# (passes a validation_id) when one is supplied — this skips re-running
+# Apex tests and typically cuts deploy time by 60-80%.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      validation_id:
+        description: Validation ID from a prior validate run (enables quick-deploy)
+        required: false
+        type: string
+        default: ''
+      test_level:
+        required: false
+        type: string
+        default: RunLocalTests
+      record_deployment:
+        description: Push deployment record to deployments ledger
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Salesforce CLI
+        uses: ./.github/actions/install-sf-cli
+
+      - name: Install sfdx-git-delta plugin
+        uses: ./.github/actions/install-plugin
+        with:
+          plugin: sfdx-git-delta
+
+      - name: Authenticate to Salesforce
+        uses: ./.github/actions/sf-login
+        with:
+          client_id: ${{ secrets.SF_CLIENT_ID }}
+          jwt_key: ${{ secrets.SF_JWT_KEY }}
+          username: ${{ secrets.SF_USERNAME }}
+          login_url: ${{ secrets.SF_LOGIN_URL }}
+
+      - name: Run pre-deployment Apex
+        uses: ./.github/actions/run-scripts
+        with:
+          phase: pre-deployment
+
+      - name: Quick-deploy (using validation ID)
+        id: quick
+        if: inputs.validation_id != ''
+        uses: ./.github/actions/sf-quick-deploy
+        with:
+          validation_id: ${{ inputs.validation_id }}
+
+      - name: Regenerate delta (fallback path)
+        if: inputs.validation_id == ''
+        uses: ./.github/actions/generate-delta
+        with:
+          from_sha: ${{ github.event.before || github.sha }}
+          to_sha: ${{ github.sha }}
+
+      - name: Full deploy (fallback path)
+        id: full
+        if: inputs.validation_id == ''
+        uses: ./.github/actions/sf-deploy
+        with:
+          manifest: delta/package/package.xml
+          test_level: ${{ inputs.test_level }}
+          tests_file: sfCommandTests.txt
+
+      - name: Run post-deployment Apex
+        if: always() && (steps.quick.outcome == 'success' || steps.full.outcome == 'success')
+        uses: ./.github/actions/run-scripts
+        with:
+          phase: post-deployment
+
+      - name: Record deployment
+        if: always() && inputs.record_deployment
+        run: |
+          DEPLOY_ID="${{ steps.quick.outputs.deploy_id || steps.full.outputs.deploy_id }}"
+          OUTCOME="${{ job.status }}"
+          mkdir -p deployments
+          RECORD_FILE="deployments/$(date -u +%Y-%m-%d)-${{ inputs.environment }}-${{ github.run_id }}.json"
+          cat > "$RECORD_FILE" <<EOF
+          {
+            "environment": "${{ inputs.environment }}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "actor": "${{ github.actor }}",
+            "commit": "${{ github.sha }}",
+            "ref": "${{ github.ref_name }}",
+            "run_id": "${{ github.run_id }}",
+            "deploy_id": "$DEPLOY_ID",
+            "validation_id": "${{ inputs.validation_id }}",
+            "quick_deploy": ${{ inputs.validation_id != '' }},
+            "test_level": "${{ inputs.test_level }}",
+            "outcome": "$OUTCOME"
+          }
+          EOF
+          echo "Deployment recorded: $RECORD_FILE"
+
+          # Commit to a dedicated audit branch (deployments-ledger)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin deployments-ledger:deployments-ledger 2>/dev/null || git checkout --orphan deployments-ledger
+          git checkout deployments-ledger 2>/dev/null || true
+          git checkout "${{ github.sha }}" -- deployments/ 2>/dev/null || true
+          git add deployments/ || true
+          git commit -m "chore(deploy): record ${{ inputs.environment }} deploy ${{ github.run_id }}" || echo "nothing to commit"
+          git push origin HEAD:deployments-ledger || echo "push failed (non-fatal)"
+
+      - name: Append deployment summary
+        if: always()
+        run: |
+          {
+            echo "## Deployment summary — ${{ inputs.environment }}"
+            echo ""
+            echo "**Outcome:** ${{ job.status }}"
+            echo "**Strategy:** ${{ inputs.validation_id != '' && 'quick-deploy' || 'full deploy' }}"
+            echo "**Deploy ID:** \`${{ steps.quick.outputs.deploy_id || steps.full.outputs.deploy_id }}\`"
+            echo "**Validation ID:** \`${{ inputs.validation_id }}\`"
+            echo ""
+            echo "### Rollback"
+            echo "If this deploy needs to be rolled back, run the \`rollback\` workflow with run ID \`${{ github.run_id }}\` and environment \`${{ inputs.environment }}\`."
+          } >> "$GITHUB_STEP_SUMMARY"

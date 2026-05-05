@@ -1,0 +1,34 @@
+name: SF Dev (develop branch)
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      commit_hash:
+        description: Optional override start commit
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  validate:
+    uses: ./.github/workflows/_reusable-validate.yml
+    with:
+      environment: sfdev
+      commit_hash: ${{ github.event.inputs.commit_hash || '' }}
+      test_level: RunSpecifiedTests
+    secrets: inherit
+
+  deploy:
+    needs: validate
+    if: needs.validate.outputs.nothing_to_deploy != 'true'
+    uses: ./.github/workflows/_reusable-deploy.yml
+    with:
+      environment: sfdev
+      validation_id: ${{ needs.validate.outputs.validation_id }}
+      test_level: RunSpecifiedTests
+    secrets: inherit

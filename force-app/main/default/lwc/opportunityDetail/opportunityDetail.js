@@ -1,33 +1,33 @@
 // opportunityDetail.js
-import { LightningElement, wire, track } from 'lwc';
-import { CurrentPageReference } from 'lightning/navigation';
-import { registerListener, unregisterAllListeners } from 'c/pubsub';
+// Place this on an Opportunity record page — it gets recordId from the
+// page context. Uses @wire for reactivity (no manual refresh needed) and
+// surfaces errors via toast.
+import { LightningElement, api, wire } from 'lwc';
+import { ShowToastEvent } from 'lightning/platformShowToastEvent';
 import getOpportunity from '@salesforce/apex/OpportunityController.getOpportunity';
 
 export default class OpportunityDetail extends LightningElement {
-    @track opportunity;
-    @wire(CurrentPageReference) pageRef;
+    @api recordId;
+    opportunity;
+    error;
 
-    connectedCallback() {
-        registerListener('opportunitySelected', this.handleOpportunitySelected, this);
+    @wire(getOpportunity, { opportunityId: '$recordId' })
+    wiredOpportunity({ data, error }) {
+        if (data) {
+            this.opportunity = data;
+            this.error = undefined;
+        } else if (error) {
+            this.error = error;
+            this.opportunity = undefined;
+            this.dispatchEvent(new ShowToastEvent({
+                title: 'Error loading Opportunity',
+                message: (error.body && error.body.message) || 'Unknown error',
+                variant: 'error'
+            }));
+        }
     }
 
-    disconnectedCallback() {
-        unregisterAllListeners(this);
-    }
-
-    handleOpportunitySelected(opportunityId) {
-        getOpportunity({ opportunityId })
-            .then(result => {
-                this.opportunity = result;
-            })
-            .catch(error => {
-                // Add error handling logic here
-                this.error = error;
-            });
-    }
-
-    get opportunityData() {
-        return this.opportunity ? this.opportunity : null;
+    get hasOpportunity() {
+        return this.opportunity != null;
     }
 }

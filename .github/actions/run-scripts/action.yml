@@ -1,0 +1,27 @@
+name: Run Apex scripts
+description: Runs all *.apex files in pre-deployment/ or post-deployment/
+inputs:
+  phase:
+    description: 'pre-deployment | post-deployment'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Run scripts
+      shell: bash
+      run: |
+        DIR=".github/${{ inputs.phase }}"
+        if [ ! -d "$DIR" ]; then
+          echo "No $DIR directory; skipping."
+          exit 0
+        fi
+        FILES=$(find "$DIR" -name '*.apex' | sort)
+        if [ -z "$FILES" ]; then
+          echo "No .apex files in $DIR; skipping."
+          exit 0
+        fi
+        for f in $FILES; do
+          echo "Running $f"
+          sf apex run --file "$f" --target-org ci-org
+        done

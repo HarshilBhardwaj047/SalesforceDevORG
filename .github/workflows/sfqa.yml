@@ -1,0 +1,33 @@
+name: SF QA (qa branch)
+
+on:
+  push:
+    branches: [qa]
+  workflow_dispatch:
+    inputs:
+      commit_hash:
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  validate:
+    uses: ./.github/workflows/_reusable-validate.yml
+    with:
+      environment: sfqa
+      commit_hash: ${{ github.event.inputs.commit_hash || '' }}
+      test_level: RunLocalTests
+    secrets: inherit
+
+  deploy:
+    needs: validate
+    if: needs.validate.outputs.nothing_to_deploy != 'true'
+    uses: ./.github/workflows/_reusable-deploy.yml
+    with:
+      environment: sfqa
+      validation_id: ${{ needs.validate.outputs.validation_id }}
+      test_level: RunLocalTests
+    secrets: inherit

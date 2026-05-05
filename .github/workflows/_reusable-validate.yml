@@ -1,0 +1,164 @@
+name: Reusable - Validate Salesforce Deployment
+
+# Reusable workflow that does delta generation, dynamic test selection,
+# and a validation-only deployment against a target org. Returns a
+# validation ID that the deploy job can use for quick-deploy.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment name (sfdev, sfqa, sfstage, sfprod)
+        required: true
+        type: string
+      commit_hash:
+        description: Optional override commit hash for delta start point
+        required: false
+        type: string
+        default: ''
+      test_level:
+        description: 'Salesforce test level: NoTestRun, RunSpecifiedTests, RunLocalTests, RunAllTestsInOrg'
+        required: false
+        type: string
+        default: RunLocalTests
+    outputs:
+      nothing_to_deploy:
+        description: 'true when there are no metadata changes to deploy'
+        value: ${{ jobs.validate.outputs.nothing_to_deploy }}
+      validation_id:
+        description: Salesforce validation deployment ID for quick-deploy
+        value: ${{ jobs.validate.outputs.validation_id }}
+      delta_summary:
+        description: Human-readable summary of the delta package
+        value: ${{ jobs.validate.outputs.delta_summary }}
+
+jobs:
+  validate:
+    name: Validate against ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      nothing_to_deploy: ${{ steps.delta.outputs.nothing_to_deploy }}
+      validation_id: ${{ steps.validate.outputs.validation_id }}
+      delta_summary: ${{ steps.delta.outputs.summary }}
+
+    steps:
+      - name: Checkout repository (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Salesforce CLI
+        uses: ./.github/actions/install-sf-cli
+
+      - name: Install sfdx-git-delta plugin
+        uses: ./.github/actions/install-plugin
+        with:
+          plugin: sfdx-git-delta
+
+      - name: Resolve start commit
+        id: start
+        run: |
+          if [ -n "${{ inputs.commit_hash }}" ]; then
+            echo "Using manual override: ${{ inputs.commit_hash }}"
+            echo "sha=${{ inputs.commit_hash }}" >> "$GITHUB_OUTPUT"
+          else
+            # Find last successful run of THIS workflow on THIS branch
+            LAST_SUCCESS=$(gh run list \
+              --workflow "${{ github.workflow }}" \
+              --branch "${{ github.ref_name }}" \
+              --status success \
+              --limit 1 \
+              --json headSha \
+              --jq '.[0].headSha // empty')
+            if [ -z "$LAST_SUCCESS" ]; then
+              echo "No prior successful run found on ${{ github.ref_name }}"
+              # Fallback: merge-base with parent environment branch (covers first-run case)
+              PARENT=$(git merge-base HEAD origin/develop || git merge-base HEAD HEAD~1 || echo "")
+              if [ -z "$PARENT" ]; then
+                echo "::error::Cannot determine start commit. Run first-run-baseline workflow first."
+                exit 1
+              fi
+              echo "Using merge-base fallback: $PARENT"
+              echo "sha=$PARENT" >> "$GITHUB_OUTPUT"
+            else
+              echo "Using last successful run: $LAST_SUCCESS"
+              echo "sha=$LAST_SUCCESS" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Generate delta package
+        id: delta
+        uses: ./.github/actions/generate-delta
+        with:
+          from_sha: ${{ steps.start.outputs.sha }}
+          to_sha: ${{ github.sha }}
+
+      - name: Generate dynamic test command
+        id: tests
+        if: steps.delta.outputs.nothing_to_deploy != 'true'
+        run: |
+          node .github/scripts/GenerateSfdxCommand.js
+          echo "tests resolved"
+
+      - name: Authenticate to Salesforce
+        if: steps.delta.outputs.nothing_to_deploy != 'true'
+        uses: ./.github/actions/sf-login
+        with:
+          client_id: ${{ secrets.SF_CLIENT_ID }}
+          jwt_key: ${{ secrets.SF_JWT_KEY }}
+          username: ${{ secrets.SF_USERNAME }}
+          login_url: ${{ secrets.SF_LOGIN_URL }}
+
+      - name: Snapshot current org metadata (rollback bundle)
+        if: steps.delta.outputs.nothing_to_deploy != 'true'
+        run: |
+          # Retrieve the CURRENT state of metadata being changed, so we have
+          # a rollback bundle if the deployment causes problems downstream.
+          mkdir -p rollback-snapshot
+          if [ -f delta/package/package.xml ]; then
+            sf project retrieve start \
+              --manifest delta/package/package.xml \
+              --target-org ci-org \
+              --output-dir rollback-snapshot \
+              --ignore-conflicts || echo "Snapshot retrieve had warnings (likely new components)"
+          fi
+
+      - name: Upload rollback snapshot
+        if: steps.delta.outputs.nothing_to_deploy != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rollback-snapshot-${{ inputs.environment }}-${{ github.run_id }}
+          path: rollback-snapshot/
+          retention-days: 30
+
+      - name: Validate deployment (dry-run)
+        id: validate
+        if: steps.delta.outputs.nothing_to_deploy != 'true'
+        uses: ./.github/actions/sf-check-deploy
+        with:
+          manifest: delta/package/package.xml
+          test_level: ${{ inputs.test_level }}
+          tests_file: sfCommandTests.txt
+
+      - name: Append validation summary
+        if: always()
+        run: |
+          {
+            echo "## Validation summary — ${{ inputs.environment }}"
+            echo ""
+            echo "**Start commit:** \`${{ steps.start.outputs.sha }}\`"
+            echo "**Head commit:** \`${{ github.sha }}\`"
+            echo "**Test level:** ${{ inputs.test_level }}"
+            echo "**Nothing to deploy:** ${{ steps.delta.outputs.nothing_to_deploy }}"
+            if [ -n "${{ steps.validate.outputs.validation_id }}" ]; then
+              echo "**Validation ID:** \`${{ steps.validate.outputs.validation_id }}\` (eligible for quick-deploy for 10 days)"
+            fi
+            echo ""
+            echo "### Delta"
+            echo '```'
+            cat delta/package/package.xml 2>/dev/null || echo "(no delta package generated)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

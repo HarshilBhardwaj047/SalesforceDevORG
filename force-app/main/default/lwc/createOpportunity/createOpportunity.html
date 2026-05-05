@@ -1,13 +1,16 @@
 <template>
-    <lightning-card title="Create Opportunity">
+    <lightning-card title="Create Opportunity" icon-name="standard:opportunity">
         <div class="slds-m-around_medium">
-            <lightning-input label="Opportunity Name" value={oppName} onchange={handleNameChange}></lightning-input>
+            <lightning-input label="Opportunity Name" value={oppName}
+                onchange={handleNameChange}></lightning-input>
             <lightning-input type="date" label="Close Date" value={oppCloseDate}
                 onchange={handleCloseDateChange}></lightning-input>
-            <lightning-combobox label="Stage" value={oppStage} options={stageOptions}
-                onchange={handleStageChange}></lightning-combobox>
-            <lightning-button class="slds-m-top_medium" label="Create Opportunity" onclick={createOpportunity}
-                variant="brand"></lightning-button>
+            <lightning-combobox label="Stage" value={oppStage}
+                options={stageOptions} onchange={handleStageChange}>
+            </lightning-combobox>
+            <lightning-button class="slds-m-top_medium" label="Create Opportunity"
+                onclick={createOpportunity} variant="brand">
+            </lightning-button>
         </div>
     </lightning-card>
 </template>

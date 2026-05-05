@@ -1,0 +1,27 @@
+name: SF Pre-Prod Validation (validation only)
+
+# Validation-only — does NOT deploy. Used to dry-run the eventual prod
+# deployment against a Pre-Prod org that mirrors prod. Run on a release
+# branch before merging to main.
+
+on:
+  push:
+    branches: [pre-prod-validation]
+  workflow_dispatch:
+    inputs:
+      commit_hash:
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate:
+    uses: ./.github/workflows/_reusable-validate.yml
+    with:
+      environment: sfprod-validation
+      commit_hash: ${{ github.event.inputs.commit_hash || '' }}
+      test_level: RunAllTestsInOrg
+    secrets: inherit

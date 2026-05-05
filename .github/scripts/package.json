@@ -1,0 +1,12 @@
+{
+  "name": "sf-pr-review-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Two-layer Salesforce PR review bot (static rules + Claude AI)",
+  "main": "review.js",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.1",
+    "@octokit/rest": "^20.1.1",
+    "parse-diff": "^0.11.1"
+  }
+}
