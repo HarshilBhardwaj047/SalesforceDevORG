@@ -1,0 +1,111 @@
+name: Drift Detection
+
+# Weekly check to spot configuration drift between the prod org and main.
+# Catches the "someone made a change in Setup and didn't put it in git"
+# class of bugs. Opens an issue if drift is detected.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    environment: sfprod-validation
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Install Salesforce CLI
+        uses: ./.github/actions/install-sf-cli
+
+      - name: Authenticate to Salesforce
+        uses: ./.github/actions/sf-login
+        with:
+          client_id: ${{ secrets.SF_CLIENT_ID }}
+          jwt_key: ${{ secrets.SF_JWT_KEY }}
+          username: ${{ secrets.SF_USERNAME }}
+          login_url: ${{ secrets.SF_LOGIN_URL }}
+
+      - name: Retrieve tracked metadata from org
+        run: |
+          mkdir -p drift-check
+          sf project retrieve start \
+            --manifest manifest/package.xml \
+            --target-org ci-org \
+            --output-dir drift-check \
+            --ignore-conflicts || true
+
+      - name: Diff org against main
+        id: diff
+        run: |
+          set +e
+          diff -r force-app/main/default drift-check/main/default > drift.txt
+          DIFF_EXIT=$?
+          if [ $DIFF_EXIT -eq 0 ]; then
+            echo "drift_found=false" >> "$GITHUB_OUTPUT"
+            echo "No drift detected."
+          else
+            echo "drift_found=true" >> "$GITHUB_OUTPUT"
+            head -200 drift.txt > drift-summary.txt
+            echo "Drift detected. See drift.txt artifact."
+          fi
+
+      - name: Upload drift report
+        if: steps.diff.outputs.drift_found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-report-${{ github.run_id }}
+          path: drift.txt
+
+      - name: Open / update drift issue
+        if: steps.diff.outputs.drift_found == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('drift-summary.txt', 'utf8');
+            const title = '⚠️ Drift detected between Prod org and main';
+            const body = [
+              `Drift detected on ${new Date().toISOString().split('T')[0]}.`,
+              '',
+              'First 200 lines of diff (full report attached as workflow artifact):',
+              '',
+              '```diff',
+              summary,
+              '```',
+              '',
+              `Workflow run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            ].join('\n');
+
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'drift',
+            });
+            const existing = issues.data.find(i => i.title === title);
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['drift'],
+              });
+            }

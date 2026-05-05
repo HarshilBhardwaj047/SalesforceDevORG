@@ -1,0 +1,10 @@
+name: Install Salesforce CLI
+description: Installs @salesforce/cli globally and verifies it
+runs:
+  using: composite
+  steps:
+    - name: Install SF CLI
+      shell: bash
+      run: |
+        npm install --global @salesforce/cli
+        sf --version

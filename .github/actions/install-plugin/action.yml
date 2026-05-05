@@ -1,0 +1,14 @@
+name: Install SF Plugin
+description: Installs an SF CLI plugin (e.g. sfdx-git-delta)
+inputs:
+  plugin:
+    description: Plugin name to install
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Install ${{ inputs.plugin }}
+      shell: bash
+      run: |
+        echo y | sf plugins install ${{ inputs.plugin }}
+        sf plugins

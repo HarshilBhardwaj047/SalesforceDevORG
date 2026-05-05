@@ -1,0 +1,30 @@
+name: SF Quick Deploy
+description: Quick-deploy using a previously-validated deployment ID (no test re-run)
+inputs:
+  validation_id:
+    description: Validation deployment ID
+    required: true
+outputs:
+  deploy_id:
+    description: Deployment ID
+    value: ${{ steps.deploy.outputs.deploy_id }}
+
+runs:
+  using: composite
+  steps:
+    - name: Quick deploy
+      id: deploy
+      shell: bash
+      run: |
+        set -euo pipefail
+        sf project deploy quick \
+          --job-id "${{ inputs.validation_id }}" \
+          --target-org ci-org \
+          --wait 30 \
+          --json > deploy-result.json
+        DEPLOY_ID=$(jq -r '.result.id' deploy-result.json)
+        STATUS=$(jq -r '.result.status' deploy-result.json)
+        echo "Deploy ID: $DEPLOY_ID"
+        echo "Status: $STATUS"
+        echo "deploy_id=$DEPLOY_ID" >> "$GITHUB_OUTPUT"
+        [ "$STATUS" = "Succeeded" ] || { jq '.' deploy-result.json; exit 1; }

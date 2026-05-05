@@ -1,12 +1,21 @@
-public class OlderAccountsUtility {
+public with sharing class OlderAccountsUtility {
+    /**
+     * Marks the 5 oldest Accounts as Heritage Accounts.
+     * Uses USER_MODE so the running user's CRUD/FLS is enforced.
+     */
     public static void updateOlderAccounts() {
-        // get the 5 oldest accounts
-        Account[] oldAccounts = [ SELECT Id, Description FROM Account ORDER BY CreatedDate ASC LIMIT 5];
-        // loop through them and update the description field
-         for (Account acct : oldAccounts){
-        acct.Description = 'Heritage Account';
-      }
-        // save the changes you made
-        update oldAccounts;
+        List<Account> oldAccounts = [
+            SELECT Id, Description
+            FROM Account
+            WITH USER_MODE
+            ORDER BY CreatedDate ASC
+            LIMIT 5
+        ];
+        for (Account acct : oldAccounts) {
+            acct.Description = 'Heritage Account';
+        }
+        if (!oldAccounts.isEmpty()) {
+            update oldAccounts;
+        }
     }
 }

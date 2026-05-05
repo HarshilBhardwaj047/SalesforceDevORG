@@ -1,18 +1,29 @@
-<!-- opportunityDetail.html -->
 <template>
-    <template if:true={opportunityData}>
-        <lightning-card title={opportunityData.Name} icon-name="standard:opportunity">
+    <template if:true={hasOpportunity}>
+        <lightning-card title={opportunity.Name} icon-name="standard:opportunity">
             <div class="slds-m-around_medium">
-                <p><lightning-formatted-text title="Stage" value={opportunityData.StageName}></lightning-formatted-text>
+                <p>
+                    <strong>Stage: </strong>
+                    <lightning-formatted-text value={opportunity.StageName}></lightning-formatted-text>
                 </p>
-                <p><lightning-formatted-date-time title="Close Date"
-                        value={opportunityData.CloseDate}></lightning-formatted-date-time></p>
+                <p>
+                    <strong>Close Date: </strong>
+                    <lightning-formatted-date-time value={opportunity.CloseDate}></lightning-formatted-date-time>
+                </p>
+                <template if:true={opportunity.Amount}>
+                    <p>
+                        <strong>Amount: </strong>
+                        <lightning-formatted-number value={opportunity.Amount}
+                            format-style="currency" currency-code="USD">
+                        </lightning-formatted-number>
+                    </p>
+                </template>
             </div>
         </lightning-card>
     </template>
-    <template if:false={opportunityData}>
+    <template if:false={hasOpportunity}>
         <div class="slds-m-around_medium">
-            <p>No Opportunity Selected</p>
+            <p>No Opportunity selected.</p>
         </div>
     </template>
 </template>

@@ -1,0 +1,40 @@
+name: SF Prod (main branch)
+
+# Production deployments use:
+#   - RunAllTestsInOrg (mandatory for prod)
+#   - GitHub environment protection rules on `sfprod` for manual approval
+#   - Quick-deploy after validation passes (saves 60-80% of deploy time)
+#   - Deployment ledger entry (auto-committed to deployments-ledger branch)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      commit_hash:
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  validate:
+    uses: ./.github/workflows/_reusable-validate.yml
+    with:
+      environment: sfprod
+      commit_hash: ${{ github.event.inputs.commit_hash || '' }}
+      test_level: RunAllTestsInOrg
+    secrets: inherit
+
+  deploy:
+    needs: validate
+    if: needs.validate.outputs.nothing_to_deploy != 'true'
+    uses: ./.github/workflows/_reusable-deploy.yml
+    with:
+      environment: sfprod
+      validation_id: ${{ needs.validate.outputs.validation_id }}
+      test_level: RunAllTestsInOrg
+      record_deployment: true
+    secrets: inherit

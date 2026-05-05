@@ -1,0 +1,54 @@
+name: SF Check Deploy
+description: Performs a dry-run deployment and captures the validation ID
+inputs:
+  manifest:
+    description: Path to package.xml
+    required: true
+  test_level:
+    description: 'NoTestRun | RunSpecifiedTests | RunLocalTests | RunAllTestsInOrg'
+    required: true
+  tests_file:
+    description: Path to a file containing newline-separated test class names
+    required: false
+    default: ''
+outputs:
+  validation_id:
+    description: Validation deployment ID (usable for quick-deploy for 10 days)
+    value: ${{ steps.deploy.outputs.validation_id }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate deploy
+      id: deploy
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        ARGS=(
+          project deploy validate
+          --manifest "${{ inputs.manifest }}"
+          --test-level "${{ inputs.test_level }}"
+          --target-org ci-org
+          --wait 60
+          --json
+        )
+
+        if [ "${{ inputs.test_level }}" = "RunSpecifiedTests" ] && [ -n "${{ inputs.tests_file }}" ] && [ -f "${{ inputs.tests_file }}" ]; then
+          while IFS= read -r t; do
+            [ -z "$t" ] && continue
+            ARGS+=(--tests "$t")
+          done < "${{ inputs.tests_file }}"
+        fi
+
+        sf "${ARGS[@]}" > deploy-result.json
+        VALIDATION_ID=$(jq -r '.result.id' deploy-result.json)
+        STATUS=$(jq -r '.result.status' deploy-result.json)
+        echo "Validation ID: $VALIDATION_ID"
+        echo "Status: $STATUS"
+        echo "validation_id=$VALIDATION_ID" >> "$GITHUB_OUTPUT"
+
+        if [ "$STATUS" != "Succeeded" ]; then
+          jq '.result.details.componentFailures' deploy-result.json
+          exit 1
+        fi

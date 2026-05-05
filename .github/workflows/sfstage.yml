@@ -1,0 +1,33 @@
+name: SF Stage (stage branch)
+
+on:
+  push:
+    branches: [stage]
+  workflow_dispatch:
+    inputs:
+      commit_hash:
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  validate:
+    uses: ./.github/workflows/_reusable-validate.yml
+    with:
+      environment: sfstage
+      commit_hash: ${{ github.event.inputs.commit_hash || '' }}
+      test_level: RunLocalTests
+    secrets: inherit
+
+  deploy:
+    needs: validate
+    if: needs.validate.outputs.nothing_to_deploy != 'true'
+    uses: ./.github/workflows/_reusable-deploy.yml
+    with:
+      environment: sfstage
+      validation_id: ${{ needs.validate.outputs.validation_id }}
+      test_level: RunLocalTests
+    secrets: inherit

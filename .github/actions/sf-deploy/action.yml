@@ -1,0 +1,45 @@
+name: SF Deploy
+description: Full deployment of the delta package
+inputs:
+  manifest:
+    description: Path to package.xml
+    required: true
+  test_level:
+    required: true
+  tests_file:
+    required: false
+    default: ''
+outputs:
+  deploy_id:
+    description: Deployment ID
+    value: ${{ steps.deploy.outputs.deploy_id }}
+
+runs:
+  using: composite
+  steps:
+    - name: Deploy
+      id: deploy
+      shell: bash
+      run: |
+        set -euo pipefail
+        ARGS=(
+          project deploy start
+          --manifest "${{ inputs.manifest }}"
+          --test-level "${{ inputs.test_level }}"
+          --target-org ci-org
+          --wait 120
+          --json
+        )
+        if [ "${{ inputs.test_level }}" = "RunSpecifiedTests" ] && [ -n "${{ inputs.tests_file }}" ] && [ -f "${{ inputs.tests_file }}" ]; then
+          while IFS= read -r t; do
+            [ -z "$t" ] && continue
+            ARGS+=(--tests "$t")
+          done < "${{ inputs.tests_file }}"
+        fi
+        sf "${ARGS[@]}" > deploy-result.json
+        DEPLOY_ID=$(jq -r '.result.id' deploy-result.json)
+        STATUS=$(jq -r '.result.status' deploy-result.json)
+        echo "Deploy ID: $DEPLOY_ID"
+        echo "Status: $STATUS"
+        echo "deploy_id=$DEPLOY_ID" >> "$GITHUB_OUTPUT"
+        [ "$STATUS" = "Succeeded" ] || { jq '.result.details.componentFailures' deploy-result.json; exit 1; }

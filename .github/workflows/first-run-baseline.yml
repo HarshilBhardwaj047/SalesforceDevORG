@@ -1,0 +1,30 @@
+name: First-Run Baseline
+
+# Run this manually ONCE per branch before the deployment workflow runs
+# for the first time. Creates a successful workflow run that the delta
+# logic can use as the starting commit.
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to baseline (must already exist)
+        required: true
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - name: Record baseline
+        run: |
+          echo "## Baseline established"
+          echo "**Branch:** ${{ github.event.inputs.branch }}"
+          echo "**Commit:** ${{ github.sha }}"
+          echo ""
+          echo "Subsequent deployment runs on this branch will use this commit"
+          echo "as the start point for delta generation." >> "$GITHUB_STEP_SUMMARY"

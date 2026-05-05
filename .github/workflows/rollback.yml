@@ -1,0 +1,81 @@
+name: Rollback Deployment
+
+# Restores an environment to its pre-deployment state using the rollback
+# snapshot artifact captured during the original validate job. This is the
+# manual safety net for "we deployed something bad to prod, get us back".
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to roll back
+        required: true
+        type: choice
+        options: [sfdev, sfqa, sfstage, sfprod]
+      run_id:
+        description: GitHub Actions run ID of the deployment to roll back
+        required: true
+      confirm:
+        description: Type ROLLBACK to confirm
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  rollback:
+    if: github.event.inputs.confirm == 'ROLLBACK'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Salesforce CLI
+        uses: ./.github/actions/install-sf-cli
+
+      - name: Download rollback snapshot
+        uses: actions/download-artifact@v4
+        with:
+          name: rollback-snapshot-${{ github.event.inputs.environment }}-${{ github.event.inputs.run_id }}
+          path: rollback-snapshot/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.inputs.run_id }}
+
+      - name: Authenticate to Salesforce
+        uses: ./.github/actions/sf-login
+        with:
+          client_id: ${{ secrets.SF_CLIENT_ID }}
+          jwt_key: ${{ secrets.SF_JWT_KEY }}
+          username: ${{ secrets.SF_USERNAME }}
+          login_url: ${{ secrets.SF_LOGIN_URL }}
+
+      - name: Deploy snapshot back to org
+        run: |
+          set -euo pipefail
+          if [ ! -d rollback-snapshot ] || [ -z "$(ls -A rollback-snapshot 2>/dev/null)" ]; then
+            echo "::error::Snapshot is empty. The original deployment may have only created NEW components, which cannot be auto-rolled back. Use destructive changes to remove them, or restore from a previous backup."
+            exit 1
+          fi
+          sf project deploy start \
+            --source-dir rollback-snapshot \
+            --target-org ci-org \
+            --test-level RunLocalTests \
+            --wait 60 \
+            --json > rollback-result.json
+          DEPLOY_ID=$(jq -r '.result.id' rollback-result.json)
+          echo "Rollback deployment ID: $DEPLOY_ID"
+
+      - name: Append rollback summary
+        if: always()
+        run: |
+          {
+            echo "## Rollback summary"
+            echo ""
+            echo "**Environment:** ${{ github.event.inputs.environment }}"
+            echo "**Original run:** ${{ github.event.inputs.run_id }}"
+            echo "**Rollback outcome:** ${{ job.status }}"
+            echo "**Triggered by:** ${{ github.actor }}"
+          } >> "$GITHUB_STEP_SUMMARY"
