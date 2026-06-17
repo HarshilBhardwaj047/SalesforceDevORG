@@ -15,9 +15,14 @@ on:
         required: false
         default: ''
 
+concurrency:
+  group: deploy-sfprod
+  cancel-in-progress: false
+
 permissions:
   contents: write
   pull-requests: read
+  actions: read
 
 jobs:
   validate:

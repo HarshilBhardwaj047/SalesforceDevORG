@@ -24,18 +24,15 @@ permissions:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - name: Delete stale and merged branches
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const DAYS_OLD = parseInt('${{ github.event.inputs.days_old || 60 }}', 10);
-            const DRY_RUN = '${{ github.event.inputs.dry_run || 'true' }}' === 'true';
+            const DRY_RUN = '${{ github.event.inputs.dry_run || 'false' }}' === 'true';
 
             const PROTECTED_BRANCHES = [
               'main', 'master', 'develop', 'qa', 'stage', 'pre-prod-validation',

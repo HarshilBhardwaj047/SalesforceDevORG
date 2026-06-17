@@ -36,7 +36,11 @@ jobs:
   validate:
     name: Validate against ${{ inputs.environment }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      actions: read
     outputs:
       nothing_to_deploy: ${{ steps.delta.outputs.nothing_to_deploy }}
       validation_id: ${{ steps.validate.outputs.validation_id }}
@@ -58,21 +62,26 @@ jobs:
 
       - name: Resolve start commit
         id: start
+        env:
+          COMMIT_HASH_INPUT: ${{ inputs.commit_hash }}
+          WORKFLOW_NAME: ${{ github.workflow }}
+          REF_NAME: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -n "${{ inputs.commit_hash }}" ]; then
-            echo "Using manual override: ${{ inputs.commit_hash }}"
-            echo "sha=${{ inputs.commit_hash }}" >> "$GITHUB_OUTPUT"
+          if [ -n "$COMMIT_HASH_INPUT" ]; then
+            echo "Using manual override: $COMMIT_HASH_INPUT"
+            echo "sha=$COMMIT_HASH_INPUT" >> "$GITHUB_OUTPUT"
           else
             # Find last successful run of THIS workflow on THIS branch
             LAST_SUCCESS=$(gh run list \
-              --workflow "${{ github.workflow }}" \
-              --branch "${{ github.ref_name }}" \
+              --workflow "$WORKFLOW_NAME" \
+              --branch "$REF_NAME" \
               --status success \
               --limit 1 \
               --json headSha \
               --jq '.[0].headSha // empty')
             if [ -z "$LAST_SUCCESS" ]; then
-              echo "No prior successful run found on ${{ github.ref_name }}"
+              echo "No prior successful run found on $REF_NAME"
               # Fallback: merge-base with parent environment branch (covers first-run case)
               PARENT=$(git merge-base HEAD origin/develop || git merge-base HEAD HEAD~1 || echo "")
               if [ -z "$PARENT" ]; then
@@ -86,8 +95,6 @@ jobs:
               echo "sha=$LAST_SUCCESS" >> "$GITHUB_OUTPUT"
             fi
           fi
-        env:
-          GH_TOKEN: ${{ github.token }}
 
       - name: Generate delta package
         id: delta
@@ -123,7 +130,7 @@ jobs:
               --manifest delta/package/package.xml \
               --target-org ci-org \
               --output-dir rollback-snapshot \
-              --ignore-conflicts || echo "Snapshot retrieve had warnings (likely new components)"
+              --ignore-conflicts
           fi
 
       - name: Upload rollback snapshot
