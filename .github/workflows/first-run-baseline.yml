@@ -14,6 +14,9 @@ on:
 jobs:
   baseline:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,10 +24,15 @@ jobs:
           ref: ${{ github.event.inputs.branch }}
 
       - name: Record baseline
+        env:
+          BASELINE_BRANCH: ${{ github.event.inputs.branch }}
+          BASELINE_SHA: ${{ github.sha }}
         run: |
-          echo "## Baseline established"
-          echo "**Branch:** ${{ github.event.inputs.branch }}"
-          echo "**Commit:** ${{ github.sha }}"
-          echo ""
-          echo "Subsequent deployment runs on this branch will use this commit"
-          echo "as the start point for delta generation." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Baseline established"
+            echo "**Branch:** ${BASELINE_BRANCH}"
+            echo "**Commit:** ${BASELINE_SHA}"
+            echo ""
+            echo "Subsequent deployment runs on this branch will use this commit"
+            echo "as the start point for delta generation."
+          } >> "$GITHUB_STEP_SUMMARY"

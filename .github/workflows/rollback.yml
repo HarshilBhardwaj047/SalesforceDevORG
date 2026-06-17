@@ -18,15 +18,26 @@ on:
       confirm:
         description: Type ROLLBACK to confirm
         required: true
+      test_level:
+        description: 'Test level for rollback deploy (default: RunLocalTests; use NoTestRun for speed in emergency)'
+        required: false
+        type: choice
+        options: [RunLocalTests, NoTestRun, RunSpecifiedTests, RunAllTestsInOrg]
+        default: RunLocalTests
 
 permissions:
   actions: read
   contents: read
 
+concurrency:
+  group: rollback-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
 jobs:
   rollback:
     if: github.event.inputs.confirm == 'ROLLBACK'
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     environment: ${{ github.event.inputs.environment }}
 
     steps:
@@ -53,6 +64,8 @@ jobs:
           login_url: ${{ secrets.SF_LOGIN_URL }}
 
       - name: Deploy snapshot back to org
+        env:
+          ROLLBACK_TEST_LEVEL: ${{ github.event.inputs.test_level || 'RunLocalTests' }}
         run: |
           set -euo pipefail
           if [ ! -d rollback-snapshot ] || [ -z "$(ls -A rollback-snapshot 2>/dev/null)" ]; then
@@ -62,7 +75,7 @@ jobs:
           sf project deploy start \
             --source-dir rollback-snapshot \
             --target-org ci-org \
-            --test-level RunLocalTests \
+            --test-level "$ROLLBACK_TEST_LEVEL" \
             --wait 60 \
             --json > rollback-result.json
           DEPLOY_ID=$(jq -r '.result.id' rollback-result.json)
@@ -70,12 +83,17 @@ jobs:
 
       - name: Append rollback summary
         if: always()
+        env:
+          ROLLBACK_ENV: ${{ github.event.inputs.environment }}
+          ROLLBACK_RUN_ID: ${{ github.event.inputs.run_id }}
+          ROLLBACK_ACTOR: ${{ github.actor }}
+          ROLLBACK_OUTCOME: ${{ job.status }}
         run: |
           {
             echo "## Rollback summary"
             echo ""
-            echo "**Environment:** ${{ github.event.inputs.environment }}"
-            echo "**Original run:** ${{ github.event.inputs.run_id }}"
-            echo "**Rollback outcome:** ${{ job.status }}"
-            echo "**Triggered by:** ${{ github.actor }}"
+            echo "**Environment:** ${ROLLBACK_ENV}"
+            echo "**Original run:** ${ROLLBACK_RUN_ID}"
+            echo "**Rollback outcome:** ${ROLLBACK_OUTCOME}"
+            echo "**Triggered by:** ${ROLLBACK_ACTOR}"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -29,6 +29,7 @@ jobs:
   deploy:
     name: Deploy to ${{ inputs.environment }}
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     environment: ${{ inputs.environment }}
     permissions:
       contents: write
@@ -91,26 +92,37 @@ jobs:
 
       - name: Record deployment
         if: always() && inputs.record_deployment
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          DEPLOY_ACTOR: ${{ github.actor }}
+          DEPLOY_SHA: ${{ github.sha }}
+          DEPLOY_REF: ${{ github.ref_name }}
+          DEPLOY_RUN_ID: ${{ github.run_id }}
+          DEPLOY_VALIDATION_ID: ${{ inputs.validation_id }}
+          DEPLOY_TEST_LEVEL: ${{ inputs.test_level }}
+          DEPLOY_QUICK: ${{ inputs.validation_id != '' }}
+          DEPLOY_ID_QUICK: ${{ steps.quick.outputs.deploy_id }}
+          DEPLOY_ID_FULL: ${{ steps.full.outputs.deploy_id }}
+          DEPLOY_OUTCOME: ${{ job.status }}
         run: |
-          DEPLOY_ID="${{ steps.quick.outputs.deploy_id || steps.full.outputs.deploy_id }}"
-          OUTCOME="${{ job.status }}"
+          DEPLOY_ID="${DEPLOY_ID_QUICK:-$DEPLOY_ID_FULL}"
           mkdir -p deployments
-          RECORD_FILE="deployments/$(date -u +%Y-%m-%d)-${{ inputs.environment }}-${{ github.run_id }}.json"
-          cat > "$RECORD_FILE" <<EOF
+          RECORD_FILE="deployments/$(date -u +%Y-%m-%d)-${DEPLOY_ENVIRONMENT}-${DEPLOY_RUN_ID}.json"
+          cat > "$RECORD_FILE" <<RECEOF
           {
-            "environment": "${{ inputs.environment }}",
+            "environment": "${DEPLOY_ENVIRONMENT}",
             "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "actor": "${{ github.actor }}",
-            "commit": "${{ github.sha }}",
-            "ref": "${{ github.ref_name }}",
-            "run_id": "${{ github.run_id }}",
-            "deploy_id": "$DEPLOY_ID",
-            "validation_id": "${{ inputs.validation_id }}",
-            "quick_deploy": ${{ inputs.validation_id != '' }},
-            "test_level": "${{ inputs.test_level }}",
-            "outcome": "$OUTCOME"
+            "actor": "${DEPLOY_ACTOR}",
+            "commit": "${DEPLOY_SHA}",
+            "ref": "${DEPLOY_REF}",
+            "run_id": "${DEPLOY_RUN_ID}",
+            "deploy_id": "${DEPLOY_ID}",
+            "validation_id": "${DEPLOY_VALIDATION_ID}",
+            "quick_deploy": ${DEPLOY_QUICK},
+            "test_level": "${DEPLOY_TEST_LEVEL}",
+            "outcome": "${DEPLOY_OUTCOME}"
           }
-          EOF
+RECEOF
           echo "Deployment recorded: $RECORD_FILE"
 
           # Commit to a dedicated audit branch (deployments-ledger)
@@ -118,9 +130,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin deployments-ledger:deployments-ledger 2>/dev/null || git checkout --orphan deployments-ledger
           git checkout deployments-ledger 2>/dev/null || true
-          git checkout "${{ github.sha }}" -- deployments/ 2>/dev/null || true
+          git checkout "${DEPLOY_SHA}" -- deployments/ 2>/dev/null || true
           git add deployments/ || true
-          git commit -m "chore(deploy): record ${{ inputs.environment }} deploy ${{ github.run_id }}" || echo "nothing to commit"
+          git commit -m "chore(deploy): record ${DEPLOY_ENVIRONMENT} deploy ${DEPLOY_RUN_ID}" || echo "nothing to commit"
           git push origin HEAD:deployments-ledger || echo "push failed (non-fatal)"
 
       - name: Append deployment summary
