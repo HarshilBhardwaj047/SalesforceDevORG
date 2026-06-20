@@ -87,4 +87,16 @@ public with sharing class AccountController {
             LIMIT 100
         ];
     }
+
+    @AuraEnabled(cacheable=true)
+    public static List<Account> getAccountsWithPhone() {
+        return [
+            SELECT Id, Name, Phone
+            FROM Account
+            WHERE Phone != null
+            WITH USER_MODE
+            ORDER BY Name
+            LIMIT 100
+        ];
+    }
 }
