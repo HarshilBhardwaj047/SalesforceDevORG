@@ -5,6 +5,7 @@ public with sharing class AccountController {
      * field is not in this repo as metadata — that query would fail at deploy
      * time on any org without the field. Restore that filter once Active__c
      * is added to force-app/main/default/objects/Account/fields/.
+     * TEST-101
      */
     @AuraEnabled(cacheable=true)
     public static List<Account> getRecentAccounts(Integer days) {
@@ -29,6 +30,19 @@ public with sharing class AccountController {
             FROM Account
             WHERE CreatedDate >= :cutoff
             WITH USER_MODE
+        ];
+    }
+
+    @AuraEnabled(cacheable=true)
+    public static List<Account> getAccountsByName(String searchTerm) {
+        String term = '%' + String.escapeSingleQuotes(searchTerm) + '%';
+        return [
+            SELECT Id, Name, CreatedDate
+            FROM Account
+            WHERE Name LIKE :term
+            WITH USER_MODE
+            ORDER BY Name
+            LIMIT 50
         ];
     }
 }

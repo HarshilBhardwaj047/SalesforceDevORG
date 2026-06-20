@@ -1,107 +1,88 @@
-# This GitHub Actions workflow cherry‑picks pull requests that are merged into branch
-# A and have titles starting with "Cherry" into branch B automatically.  When a pull
-# request targeting branch A is closed (merged), the job checks if the PR was
-# actually merged and if its title starts with the prefix "Cherry".  If both
-# conditions are met, it checks out branch B, cherry‑picks the merge (or squash)
-# commit from the PR, and pushes the result back to the remote branch B.
+# This workflow cherry-picks pull requests merged into 'develop' whose titles
+# start with "Cherry" into the 'qa' branch automatically.
 
-name: cherry‑pick Cherry‑prefixed PRs to branch B
+name: Cherry-pick Cherry-prefixed PRs to qa
 
 on:
-  # Trigger on pull requests that are closed (merged or closed without merge).
   pull_request:
     types: [closed]
-    # Only watch pull requests whose base branch is A.
     branches:
-      - A
+      - develop
+
+concurrency:
+  group: cherry-pick-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   cherry_pick:
-    # Only run if the pull request was merged AND its title starts with "Cherry".
     if: ${{ github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, 'Cherry') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
-      # Grant write permissions so the workflow can push to the repository.
       contents: write
 
     steps:
       - name: Checkout repository with full history
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
-          # A full fetch is required so that cherry‑picking works correctly.
           fetch-depth: 0
-          # Use the GITHUB_TOKEN to authenticate against the repository.
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git user
+        env:
+          GIT_ACTOR: ${{ github.actor }}
         run: |
-          git config --global user.name "${{ github.actor }}"
-          git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+          git config --global user.name "$GIT_ACTOR"
+          git config --global user.email "${GIT_ACTOR}@users.noreply.github.com"
 
-      - name: Prepare target branch
-        run: |
-          # Fetch remote branches and create a local copy of B if it does not exist.
-          git fetch origin
-          if git show-ref --verify --quiet refs/heads/B; then
-            echo "Local branch B exists."
-          else
-            # Create B from origin/B if it exists or from current HEAD otherwise.
-            if git ls-remote --exit-code --heads origin B; then
-              git checkout -b B origin/B
-            else
-              # If B doesn’t exist remotely, create it from branch A’s latest state.
-              git checkout -b B origin/A
-              git push --set-upstream origin B
-            fi
-          fi
-
-      - name: Cherry‑pick pull request commits into target branch
+      - name: Cherry-pick PR commit into qa
+        env:
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          TARGET_BRANCH: qa
         run: |
           set -euo pipefail
 
-          # Identify the base branch (A) and the head branch (source of PR) from the event
-          base_branch="${{ github.event.pull_request.base.ref }}"
-          source_branch="${{ github.event.pull_request.head.ref }}"
-          target_branch="B"
-
-          echo "Base branch: $base_branch"
-          echo "Source branch: $source_branch"
-          echo "Target branch: $target_branch"
-
-          # Ensure we have the latest history for all branches
-          git fetch origin
-
-          # Check out the target branch locally (create if missing)
-          if git show-ref --verify --quiet refs/heads/$target_branch; then
-            git checkout $target_branch
-            git pull origin $target_branch
-          else
-            # Create target branch from base branch if it doesn't exist
-            git checkout -b $target_branch origin/$base_branch
+          if [ -z "$MERGE_SHA" ]; then
+            echo "::error::merge_commit_sha is empty -- cannot cherry-pick." >&2
+            exit 1
           fi
 
-          # Fetch the full source branch to ensure we have all its commits
-          git fetch origin $source_branch:$source_branch
+          echo "Merge SHA: $MERGE_SHA"
+          echo "Target branch: $TARGET_BRANCH"
 
-          # Determine the list of commits that are in the source branch but not in the base branch.
-          # We use --reverse to apply commits in chronological order and exclude merge commits.
-          commit_list=$(git rev-list --reverse --no-merges origin/$source_branch ^origin/$base_branch)
+          git fetch origin
 
-          echo "Commits to cherry‑pick: $commit_list"
+          # Ensure we have the target branch locally
+          if git show-ref --verify --quiet "refs/heads/$TARGET_BRANCH"; then
+            git checkout "$TARGET_BRANCH"
+            git pull origin "$TARGET_BRANCH"
+          else
+            git checkout -b "$TARGET_BRANCH" "origin/$TARGET_BRANCH"
+          fi
 
-          # Loop through each commit and cherry‑pick it with the recursive merge strategy.
-          # If a cherry‑pick fails, abort and exit with a non-zero status so the job fails.
-          for sha in $commit_list; do
-            echo "Cherry‑picking $sha into $target_branch"
-            if git cherry-pick --strategy=recursive -X theirs -x "$sha"; then
-              echo "Successfully cherry‑picked $sha."
-            else
-              echo "Conflict detected while cherry‑picking $sha. Aborting…" >&2
+          # Detect whether the merge commit has 2 parents (regular merge) or 1 (squash merge)
+          PARENT_COUNT=$(git log -1 --format='%P' "$MERGE_SHA" | wc -w | tr -d ' ')
+          echo "Parent count for $MERGE_SHA: $PARENT_COUNT"
+
+          if [ "$PARENT_COUNT" -ge 2 ]; then
+            echo "Cherry-picking merge commit with -m 1"
+            if ! git cherry-pick -m 1 -x "$MERGE_SHA"; then
+              echo "::error::Conflict during cherry-pick of $MERGE_SHA. Aborting." >&2
               git cherry-pick --abort
               exit 1
             fi
-          done
+          else
+            echo "Cherry-picking squash-merge commit"
+            if ! git cherry-pick -x "$MERGE_SHA"; then
+              echo "::error::Conflict during cherry-pick of $MERGE_SHA. Aborting." >&2
+              git cherry-pick --abort
+              exit 1
+            fi
+          fi
+          echo "Successfully cherry-picked $MERGE_SHA into $TARGET_BRANCH."
 
-      - name: Push changes to target branch
+      - name: Push changes to qa
+        env:
+          TARGET_BRANCH: qa
         run: |
-          git push origin B
+          git push origin "$TARGET_BRANCH"
