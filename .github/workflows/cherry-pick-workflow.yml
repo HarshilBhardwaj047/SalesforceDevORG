@@ -1,5 +1,5 @@
-# This workflow cherry-picks pull requests merged into ‘develop’ whose titles
-# start with "Cherry" into the ‘qa’ branch automatically.
+# This workflow cherry-picks pull requests merged into 'develop' whose titles
+# start with "Cherry" into the 'qa' branch automatically.
 
 name: Cherry-pick Cherry-prefixed PRs to qa
 
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   cherry_pick:
-    if: ${{ github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, ‘Cherry’) }}
+    if: ${{ github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, 'Cherry') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -43,7 +43,7 @@ jobs:
           set -euo pipefail
 
           if [ -z "$MERGE_SHA" ]; then
-            echo "::error::merge_commit_sha is empty — cannot cherry-pick." >&2
+            echo "::error::merge_commit_sha is empty -- cannot cherry-pick." >&2
             exit 1
           fi
 
@@ -61,7 +61,7 @@ jobs:
           fi
 
           # Detect whether the merge commit has 2 parents (regular merge) or 1 (squash merge)
-          PARENT_COUNT=$(git log -1 --format=’%P’ "$MERGE_SHA" | wc -w | tr -d ‘ ‘)
+          PARENT_COUNT=$(git log -1 --format='%P' "$MERGE_SHA" | wc -w | tr -d ' ')
           echo "Parent count for $MERGE_SHA: $PARENT_COUNT"
 
           if [ "$PARENT_COUNT" -ge 2 ]; then
