@@ -57,4 +57,16 @@ public with sharing class AccountController {
             LIMIT :n
         ];
     }
+
+    @AuraEnabled(cacheable=true)
+    public static Account getAccountById(Id accountId) {
+        List<Account> results = [
+            SELECT Id, Name, CreatedDate
+            FROM Account
+            WHERE Id = :accountId
+            WITH USER_MODE
+            LIMIT 1
+        ];
+        return results.isEmpty() ? null : results[0];
+    }
 }
