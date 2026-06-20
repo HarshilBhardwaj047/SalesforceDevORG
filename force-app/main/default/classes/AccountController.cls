@@ -74,4 +74,17 @@ public with sharing class AccountController {
     public static Integer countAllAccounts() {
         return [SELECT COUNT() FROM Account WITH USER_MODE];
     }
+
+    @AuraEnabled(cacheable=true)
+    public static List<Account> getAccountsModifiedToday() {
+        Date today = Date.today();
+        return [
+            SELECT Id, Name, LastModifiedDate
+            FROM Account
+            WHERE LastModifiedDate = TODAY
+            WITH USER_MODE
+            ORDER BY LastModifiedDate DESC
+            LIMIT 100
+        ];
+    }
 }
