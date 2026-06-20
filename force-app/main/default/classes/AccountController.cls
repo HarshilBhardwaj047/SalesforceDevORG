@@ -45,4 +45,16 @@ public with sharing class AccountController {
             LIMIT 50
         ];
     }
+
+    @AuraEnabled(cacheable=true)
+    public static List<Account> getTopAccounts(Integer topN) {
+        Integer n = (topN == null || topN <= 0) ? 10 : topN;
+        return [
+            SELECT Id, Name, CreatedDate
+            FROM Account
+            WITH USER_MODE
+            ORDER BY CreatedDate DESC
+            LIMIT :n
+        ];
+    }
 }
