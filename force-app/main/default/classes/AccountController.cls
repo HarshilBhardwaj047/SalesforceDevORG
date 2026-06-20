@@ -20,4 +20,16 @@ public with sharing class AccountController {
             LIMIT 200
         ];
     }
+
+    @AuraEnabled(cacheable=true)
+    public static Integer getRecentAccountCount(Integer days) {
+        Integer windowDays = (days == null || days <= 0) ? 30 : days;
+        DateTime cutoff = DateTime.now().addDays(-windowDays);
+        return [
+            SELECT COUNT()
+            FROM Account
+            WHERE CreatedDate >= :cutoff
+            WITH USER_MODE
+        ];
+    }
 }
