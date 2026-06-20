@@ -32,4 +32,17 @@ public with sharing class AccountController {
             WITH USER_MODE
         ];
     }
+
+    @AuraEnabled(cacheable=true)
+    public static List<Account> getAccountsByName(String searchTerm) {
+        String term = '%' + String.escapeSingleQuotes(searchTerm) + '%';
+        return [
+            SELECT Id, Name, CreatedDate
+            FROM Account
+            WHERE Name LIKE :term
+            WITH USER_MODE
+            ORDER BY Name
+            LIMIT 50
+        ];
+    }
 }
