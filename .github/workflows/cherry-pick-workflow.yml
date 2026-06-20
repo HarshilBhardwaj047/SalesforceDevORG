@@ -10,7 +10,7 @@ on:
       - develop
 
 concurrency:
-  group: cherry-pick-${{ github.event.pull_request.number }}
+  group: cherry-pick-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: false
 
 jobs:
