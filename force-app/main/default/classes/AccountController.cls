@@ -69,4 +69,9 @@ public with sharing class AccountController {
         ];
         return results.isEmpty() ? null : results[0];
     }
+
+    @AuraEnabled(cacheable=true)
+    public static Integer countAllAccounts() {
+        return [SELECT COUNT() FROM Account WITH USER_MODE];
+    }
 }
