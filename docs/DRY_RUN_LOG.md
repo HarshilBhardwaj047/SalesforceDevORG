@@ -143,3 +143,94 @@ Repo left on `master`, clean.
 This file (`docs/DRY_RUN_LOG.md`) exists only in the local working tree — it
 was never merged (the PR was closed, not merged). Commit it on a real
 branch/PR if you want it kept in the repo's history.
+
+---
+
+## Dry Run 4 — Trigger / LWC / metadata static rules (PR #35, closed unmerged)
+
+Planted 8 violations across SF-TRIG-001/002/003, SF-META-001/002,
+SF-LWC-001/002/003 in a new trigger + LWC component + a deleted class.
+Static engine reported **7 findings**; AI layer failed with the same
+credit-exhaustion 400 as issue #33. **5 of 7 targeted rules fired
+correctly** (SF-TRIG-001/003, SF-META-001, SF-LWC-001/002/003). Two did
+not fire, both root-caused to real code bugs, filed as
+[issue #36](https://github.com/HarshilBhardwaj047/SalesforceDevORG/issues/36):
+- **SF-META-002** never fires — `diffParser.js`'s `path: f.to || f.from`
+  always resolves to `/dev/null` for deleted files (parse-diff's `+++
+  /dev/null` convention), so `checkDeleted()`'s extension check never
+  matches.
+- **SF-TRIG-002** misses multi-line `[SELECT...]` blocks — its regex only
+  matches when `[` and `SELECT` are on the same line, but this repo's own
+  convention (see `AccountController.cls`) always splits them.
+
+PR closed, branch deleted. Full violation table and cleanup commands
+mirror Dry Runs 1–3's methodology (see PR #35 diff on GitHub for exact
+file contents).
+
+---
+
+## Dry Run 5 — Real Cherry-prefixed PR merge to develop (PR #37, MERGED)
+
+**Scope change from Dry Runs 1–4:** with explicit user approval ("there
+are no org connections so nothing will be deployed"), this PR was
+actually merged, to observe the real cherry-pick → qa → sfqa.yml chain
+end to end.
+
+Steps: branched `feature/DRYRUN-05-cherry-pick-test` off `develop`, made a
+trivial comment-only change to `scripts/apex/hello.apex`, opened PR #37
+titled `Cherry: dry run 5 — verify cherry-pick-workflow promotion to qa`,
+review bot passed (no findings), merged with a real merge commit
+(`e985b02`).
+
+| Step | Expected (WORKFLOW.md §5) | Observed |
+|---|---|---|
+| Merge triggers `sfdev.yml` on `develop` | ✅ deploy attempt | ✅ Fired, but **failed** — see below |
+| Merge triggers `cherry-pick-workflow.yml` (Cherry-prefixed) | ✅ cherry-pick to `qa` | ✅ **Fully succeeded** — cherry-picked `e985b02` onto `qa`, pushed `38053a2..5b746ab` |
+| Push to `qa` triggers `sfqa.yml` | ✅ deploy attempt | ❌ **Never fired at all** — no run, ever |
+
+Two new, previously-undiscovered real bugs found and filed:
+
+- **[Issue #38](https://github.com/HarshilBhardwaj047/SalesforceDevORG/issues/38)** — `sfqa.yml` never fires after a cherry-pick, because
+  `cherry-pick-workflow.yml` pushes to `qa` using `secrets.GITHUB_TOKEN`,
+  and GitHub Actions does not let `GITHUB_TOKEN`-authored pushes trigger
+  other workflows (anti-recursion guard). The entire documented
+  `Cherry PR → qa → sfqa.yml` promotion chain is silently a no-op for the
+  QA deploy step, even though the cherry-pick itself works perfectly.
+- **[Issue #39](https://github.com/HarshilBhardwaj047/SalesforceDevORG/issues/39)** — `sfdev.yml`'s validate job failed with
+  `Unable to process file command 'output' successfully` /
+  `Invalid format '0 components across 0'`. Root cause: (a)
+  `_reusable-validate.yml`'s "no prior successful run" fallback computes
+  `git merge-base HEAD origin/develop`, which trivially equals `HEAD`
+  itself on a push-to-develop run, so the delta is always self-vs-self
+  (guaranteed empty) on every first run; (b) `generate-delta/action.yml`'s
+  `grep -c ... || echo 0` bug — `grep -c` prints `0` and still exits 1 on
+  zero matches, so `|| echo 0` fires anyway and appends a second `0` line,
+  producing a two-line value that corrupts the `$GITHUB_OUTPUT` write.
+  Together these mean the deploy pipeline can **never reach a first
+  successful run** through this fallback path — a structural deadlock,
+  not a flaky failure, and likely the explanation for the failure streak
+  visible back to 2026-06-20.
+
+Cleanup: PR #37 is merged (intentionally, not closed-unmerged like Dry
+Runs 1–4). Scratch branch deleted locally and on origin
+(`feature/DRYRUN-05-cherry-pick-test`). `develop` and `qa` both carry the
+trivial comment-only change permanently — harmless, matches the pattern
+of other real `test/cherry-*` branches already merged into this repo's
+history from prior experiments (see `qa`'s commit log).
+
+---
+
+## Cumulative status after Dry Runs 1–5
+
+| Capability | Status |
+|---|---|
+| `salesforce-pr-review.yml` (PR open/sync trigger) | ✅ works |
+| Static rules: Apex/security/trigger/LWC/metadata (13 of 15 rule IDs) | ✅ verified correct |
+| Static rules: SF-META-002, SF-TRIG-002 | ❌ real bugs — issue #36 |
+| AI layer (Claude Sonnet review) | ❌ down — credit exhausted, issue #33 |
+| `cleanup-branches.yml` (dry-run mode) | ✅ works |
+| `first-run-baseline.yml` | ⚠️ runs, but records the wrong SHA for non-default branches (`github.sha` bug, folded into issue #39's writeup) |
+| `drift-detection.yml` | ⚠️ fails as expected — no SF org credentials configured |
+| `cherry-pick-workflow.yml` | ✅ **works correctly** — cherry-picks and pushes to `qa` cleanly |
+| `sfdev.yml` / `sfqa.yml` / `sfstage.yml` / `sfprod.yml` (real deploy pipeline) | ❌ **structurally cannot succeed** — issues #38 (qa push never triggers sfqa.yml) and #39 (first-run delta computation deadlock) |
+| `rollback.yml` | ⏳ not tested — needs a prior successful deploy snapshot, which cannot exist given #39 |
