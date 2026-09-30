@@ -220,17 +220,125 @@ history from prior experiments (see `qa`'s commit log).
 
 ---
 
-## Cumulative status after Dry Runs 1–5
+## Bug-fix PR #40 — fixes for issues #33, #36, #38, #39
+
+All four bugs surfaced by Dry Runs 1–5 were fixed on branch
+`fix/pr-review-and-pipeline-bugs` and merged into `develop` (commit
+`d0fd6c0`):
+
+- **#33** — `runAiReview()` now returns `{ findings, error }` instead of a
+  bare array; a real API/parse failure is threaded through to the posted
+  review body instead of being indistinguishable from a clean pass.
+- **#36** — added a shared `findSoqlStartLines()` utility (multi-line
+  `[SELECT...]` detection) used by SF-TRIG-002/SF-APEX-001/005; fixed
+  `diffParser.js` to resolve deleted-file paths from `from` instead of
+  the always-truthy `/dev/null` in `to`, unblocking SF-META-002.
+- **#39** — `generate-delta/action.yml`'s `grep -c ... || echo 0` changed
+  to `|| true` (grep already prints `0` on zero matches); the first-run
+  fallback in `_reusable-validate.yml` now prefers the push event's
+  `before` SHA over the self-referential `git merge-base HEAD
+  origin/develop`, falling back to `HEAD~1`.
+- **#38** — `cherry-pick-workflow.yml` gained `actions: write` and an
+  explicit `gh workflow run sfqa.yml --ref qa` dispatch step after the
+  push to `qa`, since `GITHUB_TOKEN`-authored pushes can't fire other
+  workflows' `on: push` triggers.
+
+Issue #11 (pre-existing) was closed separately with a citation to Dry Run
+5 as evidence the current `cherry-pick-workflow.yml` already handles
+merge-vs-squash commits correctly.
+
+---
+
+## Dry Run 6 — Re-verify SF-META-002 + multi-line SOQL fixes (PR #41, closed unmerged)
+
+Re-ran the exact violation shapes that exposed issue #36 in Dry Run 4,
+now against the fixed rules engine. Branched
+`test/DRYRUN-06-rule-fix-verification` off `develop`: deleted
+`Basic.cls`, added `DryRun06ScratchClass.cls` (multi-line SOQL inside a
+loop, no security mode) and `DryRun06ScratchTrigger.trigger` (multi-line
+SOQL in a trigger body).
+
+All 4 targeted findings fired correctly this time:
+
+| Rule | Where | Fired? |
+|---|---|---|
+| SF-META-002 | deleted `Basic.cls` | ✅ |
+| SF-TRIG-002 | multi-line SOQL in `DryRun06ScratchTrigger.trigger` | ✅ |
+| SF-APEX-001 | multi-line SOQL inside the loop in `DryRun06ScratchClass.cls` | ✅ |
+| SF-APEX-005 | missing `WITH USER_MODE` in the same query | ✅ |
+
+The AI layer failed again with the same credit-exhaustion 400 as issue
+#33 — and again correctly surfaced as "review is incomplete, not clean"
+rather than being swallowed, reconfirming #33's fix on a second, live
+failure.
+
+Cleanup: PR #41 closed without merging
+("Confirmed: SF-META-002 now fires on the deleted Basic.cls, ...").
+Scratch branch deleted locally and on origin.
+
+---
+
+## Dry Run 7 — Real Cherry-prefixed PR merge, verify sfqa.yml dispatch (PR #42, MERGED)
+
+Following Dry Run 5's precedent (explicit approval for real merges, since
+no org credentials exist in this environment), branched
+`test/DRYRUN-07-cherry-sfqa-dispatch` off `develop`, added a second marker
+comment to `scripts/apex/hello.apex`, opened PR #42 titled `Cherry: dry
+run 7 — verify sfqa.yml dispatch after cherry-pick`, review bot passed,
+merged (squash, admin override since this repo's `develop` branch
+protection requires 1 approval the acting agent can't self-satisfy).
+
+| Step | Expected (issue #38 fix) | Observed |
+|---|---|---|
+| Merge triggers `cherry-pick-workflow.yml` | cherry-pick + push to `qa` | ✅ run [36710253614](https://github.com/HarshilBhardwaj047/SalesforceDevORG/actions/runs/36710253614) succeeded |
+| New "Trigger QA deployment" step dispatches `sfqa.yml` | explicit `workflow_dispatch` | ✅ run [36710272175](https://github.com/HarshilBhardwaj047/SalesforceDevORG/actions/runs/36710272175) fired with `event: workflow_dispatch` (not `push`) — direct proof the explicit dispatch, not the push itself, triggered it |
+| `Resolve start commit` / `Generate delta package` (issue #39 fix) | clean, no corruption | ✅ both steps succeeded |
+| `Authenticate to Salesforce` | N/A | ❌ failed — expected; no org credentials configured in this environment, unrelated to the fix |
+
+Issue #39's fix was also directly confirmed on the `develop` push that
+merged PR #40 earlier the same day: `sfdev.yml` run
+[36709450653](https://github.com/HarshilBhardwaj047/SalesforceDevORG/actions/runs/36709450653)
+resolved the start commit via **"Using push before-SHA: e985b02..."** (a
+genuine distinct ancestor, not a self-reference) and produced a clean,
+uncorrupted delta-check output (`nothing_to_deploy=true`, `summary=Delta
+package empty`) — directly contrasted against the pre-fix run
+[36704661529](https://github.com/HarshilBhardwaj047/SalesforceDevORG/actions/runs/36704661529),
+which crashed on the identical first-run scenario with `0: integer
+expression expected` / `Invalid format '0 components across 0'`.
+
+Cleanup: PR #42 merged intentionally. Scratch branches
+(`test/DRYRUN-06-rule-fix-verification`,
+`test/DRYRUN-07-cherry-sfqa-dispatch`) deleted locally and on origin.
+`develop` and `qa` carry the trivial comment-only marker permanently,
+same pattern as Dry Run 5.
+
+---
+
+## Issue closures
+
+All bugs found across Dry Runs 1–7, plus one pre-existing issue, are now
+fixed and closed:
+
+| Issue | Fixed in | Re-verified in |
+|---|---|---|
+| [#33](https://github.com/HarshilBhardwaj047/SalesforceDevORG/issues/33) — AI layer silent failure | PR #40 | Dry Run 6 (and live on PR #40/#41's own review runs) |
+| [#36](https://github.com/HarshilBhardwaj047/SalesforceDevORG/issues/36) — SF-META-002 / multi-line SOQL | PR #40 | Dry Run 6 |
+| [#38](https://github.com/HarshilBhardwaj047/SalesforceDevORG/issues/38) — `sfqa.yml` never dispatched | PR #40 | Dry Run 7 |
+| [#39](https://github.com/HarshilBhardwaj047/SalesforceDevORG/issues/39) — `grep -c` corruption + self-referential merge-base | PR #40 | Dry Run 7 (and the PR #40 merge push itself) |
+| [#11](https://github.com/HarshilBhardwaj047/SalesforceDevORG/issues/11) — pre-existing cherry-pick failures | already resolved by current `cherry-pick-workflow.yml` | Dry Run 5 |
+
+---
+
+## Cumulative status after Dry Runs 1–7
 
 | Capability | Status |
 |---|---|
 | `salesforce-pr-review.yml` (PR open/sync trigger) | ✅ works |
-| Static rules: Apex/security/trigger/LWC/metadata (13 of 15 rule IDs) | ✅ verified correct |
-| Static rules: SF-META-002, SF-TRIG-002 | ❌ real bugs — issue #36 |
-| AI layer (Claude Sonnet review) | ❌ down — credit exhausted, issue #33 |
+| Static rules: Apex/security/trigger/LWC/metadata (15 of 15 rule IDs) | ✅ verified correct — SF-META-002 and SF-TRIG-002 fixed and re-verified in Dry Run 6 |
+| AI layer (Claude Sonnet review) | ⚠️ still down — credit exhausted (external/billing, not a code bug); failures now correctly surfaced instead of swallowed (#33 fixed) |
 | `cleanup-branches.yml` (dry-run mode) | ✅ works |
-| `first-run-baseline.yml` | ⚠️ runs, but records the wrong SHA for non-default branches (`github.sha` bug, folded into issue #39's writeup) |
+| `first-run-baseline.yml` | ⚠️ still records `github.sha` rather than the checked-out `inputs.branch` HEAD for non-default branches — low priority, currently unconsumed by anything |
 | `drift-detection.yml` | ⚠️ fails as expected — no SF org credentials configured |
-| `cherry-pick-workflow.yml` | ✅ **works correctly** — cherry-picks and pushes to `qa` cleanly |
-| `sfdev.yml` / `sfqa.yml` / `sfstage.yml` / `sfprod.yml` (real deploy pipeline) | ❌ **structurally cannot succeed** — issues #38 (qa push never triggers sfqa.yml) and #39 (first-run delta computation deadlock) |
-| `rollback.yml` | ⏳ not tested — needs a prior successful deploy snapshot, which cannot exist given #39 |
+| `cherry-pick-workflow.yml` | ✅ works correctly — cherry-picks, pushes to `qa`, and now explicitly dispatches `sfqa.yml` (#38 fixed) |
+| `sfdev.yml` / `sfqa.yml` / `sfstage.yml` / `sfprod.yml` (real deploy pipeline) | ✅ first-run delta computation deadlock resolved (#39); reaches `Authenticate to Salesforce` cleanly — only blocked by the absence of real org credentials in this environment |
+| `rollback.yml` | ⏳ still not tested — needs a prior successful deploy snapshot, which requires real org credentials to produce |
