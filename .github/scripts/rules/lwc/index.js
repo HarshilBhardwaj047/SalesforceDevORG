@@ -1,8 +1,14 @@
 // rules/lwc/index.js
 
+// A real LWC bundle file lives at .../lwc/<bundleName>/<file>.js -- two path
+// segments after "lwc/". A bare `/lwc/` substring also matches tooling paths
+// like `.github/scripts/rules/lwc/index.js` (this rule's own source), which
+// isn't a Salesforce component and shouldn't be linted as one.
+const LWC_BUNDLE_FILE_RE = /\/lwc\/[^/]+\/[^/]+\.js$/;
+
 function check(filePath, content) {
-  // Apply only to .js files in lwc/, but skip __tests__ files
-  if (!filePath.includes('/lwc/') || !filePath.endsWith('.js')) return [];
+  // Apply only to .js files in an actual lwc/<bundle>/ path, but skip __tests__ files
+  if (!LWC_BUNDLE_FILE_RE.test(filePath)) return [];
   if (filePath.includes('__tests__')) return [];
   const findings = [];
   const lines = content.split('\n');
