@@ -9,3 +9,4 @@ string tempvar = 'Enter_your_name_here';
 System.debug('Hello World!');
 System.debug('My name is ' + tempvar);
 // dry-run marker: feature/DRYRUN-05-cherry-pick-test (verifies Cherry-prefixed PR -> qa promotion)
+// dry-run marker: test/DRYRUN-07-cherry-sfqa-dispatch (verifies #38 fix: explicit sfqa.yml dispatch after qa push)
