@@ -8,3 +8,4 @@
 string tempvar = 'Enter_your_name_here';
 System.debug('Hello World!');
 System.debug('My name is ' + tempvar);
+// dry-run marker: touched by feature/DRYRUN-01-workflow-walkthrough (docs/WORKFLOW.md verification)
