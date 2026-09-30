@@ -16,6 +16,7 @@ function check(filePath, content) {
           path: filePath,
           startLine,
           message: `API version ${m[1]} is below team minimum 55.0. Update to current platform release.`,
+          suggestion: 'Bump <apiVersion> to at least 55.0 (ideally the current release) in this -meta.xml file.',
         });
       }
     }
@@ -37,6 +38,7 @@ function checkDeleted(filePath) {
       path: filePath,
       startLine: 1,
       message: 'Destructive change: this file is being deleted. Confirm you have a destructiveChanges.xml entry and that no other code references it.',
+      suggestion: 'Add the file to destructiveChanges.xml for this release and grep the codebase for remaining references before merging.',
     }];
   }
   return [];

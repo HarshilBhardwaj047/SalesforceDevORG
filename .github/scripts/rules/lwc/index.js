@@ -1,8 +1,14 @@
 // rules/lwc/index.js
 
+// A real LWC bundle file lives at .../lwc/<bundleName>/<file>.js -- two path
+// segments after "lwc/". A bare `/lwc/` substring also matches tooling paths
+// like `.github/scripts/rules/lwc/index.js` (this rule's own source), which
+// isn't a Salesforce component and shouldn't be linted as one.
+const LWC_BUNDLE_FILE_RE = /\/lwc\/[^/]+\/[^/]+\.js$/;
+
 function check(filePath, content) {
-  // Apply only to .js files in lwc/, but skip __tests__ files
-  if (!filePath.includes('/lwc/') || !filePath.endsWith('.js')) return [];
+  // Apply only to .js files in an actual lwc/<bundle>/ path, but skip __tests__ files
+  if (!LWC_BUNDLE_FILE_RE.test(filePath)) return [];
   if (filePath.includes('__tests__')) return [];
   const findings = [];
   const lines = content.split('\n');
@@ -16,6 +22,7 @@ function check(filePath, content) {
         path: filePath,
         startLine: i + 1,
         message: 'Hardcoded URL in LWC. Use a custom label, custom setting, or static resource URL.',
+        suggestion: 'Move the URL into a Custom Label or Custom Metadata field and reference it via @salesforce/label or an Apex-exposed getter.',
       });
     }
   }
@@ -52,6 +59,7 @@ function check(filePath, content) {
           path: filePath,
           startLine,
           message: 'Imperative Apex call has .then but no .catch. Add error handling.',
+          suggestion: "Add `.catch(error => { this.error = error; })` (or reduceErrors) so failures surface to the user instead of failing silently.",
         });
       }
       idx = chainEnd;
@@ -67,6 +75,7 @@ function check(filePath, content) {
         path: filePath,
         startLine: i + 1,
         message: 'Direct DOM access via `document` is forbidden in LWC. Use template.querySelector or @api/@track properties.',
+        suggestion: 'Use `this.template.querySelector(...)` scoped to the component\'s shadow DOM instead of the global `document`.',
       });
     }
   }

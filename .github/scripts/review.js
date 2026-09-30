@@ -48,11 +48,13 @@ async function runStaticLayer(changedFiles) {
   return findings;
 }
 
-async function postReview({ owner, repo, prNumber, findings, changedFiles, aiError }) {
+async function postReview({ owner, repo, prNumber, findings, changedFiles, aiError, prAuthor }) {
   const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+  const mention = prAuthor ? `@${prAuthor} ` : '';
+
   if (findings.length === 0) {
     const body = aiError
-      ? `⚠️ **Salesforce PR Review** — No issues found by the static layer. **The AI review layer failed to run** (${aiError}) — this review is incomplete, not clean.`
+      ? `${mention}⚠️ **Salesforce PR Review** — No issues found by the static layer. **The AI review layer failed to run** (${aiError}) — this review is incomplete, not clean.`
       : '✅ **Salesforce PR Review** — No issues found by static or AI layers.';
     await octokit.pulls.createReview({
       owner, repo, pull_number: prNumber,
@@ -72,7 +74,7 @@ async function postReview({ owner, repo, prNumber, findings, changedFiles, aiErr
   const tableRows = [];
   for (const finding of findings) {
     const sevEmoji = finding.severity === 'high' ? '🔴' : finding.severity === 'medium' ? '🟡' : '🔵';
-    const fullMessage = `${sevEmoji} **${finding.ruleId}** — ${finding.message}${finding.suggestion ? `\n\n_Suggestion:_ ${finding.suggestion}` : ''}`;
+    const fullMessage = `${sevEmoji} **${finding.ruleId}** — ${finding.message}${finding.suggestion ? `\n\n_Suggested fix:_ ${finding.suggestion}` : ''}`;
 
     const fileLines = changedLineMap.get(finding.path);
     if (fileLines && fileLines.has(finding.startLine)) {
@@ -83,19 +85,24 @@ async function postReview({ owner, repo, prNumber, findings, changedFiles, aiErr
       });
     } else {
       // Out-of-diff finding — append to summary table
-      tableRows.push(`| ${sevEmoji} ${finding.severity} | ${finding.ruleId} | \`${finding.path}:${finding.startLine}\` | ${finding.message.replace(/\|/g, '\\|')} |`);
+      const suggestion = finding.suggestion ? finding.suggestion.replace(/\|/g, '\\|') : '—';
+      tableRows.push(`| ${sevEmoji} ${finding.severity} | ${finding.ruleId} | \`${finding.path}:${finding.startLine}\` | ${finding.message.replace(/\|/g, '\\|')} | ${suggestion} |`);
     }
   }
 
   const aiFindings = findings.filter(f => f.ruleId.startsWith('SF-AI-')).length;
   const staticFindings = findings.length - aiFindings;
 
+  // Blocking severities request changes; 'low' stays advisory (COMMENT only).
+  const hasBlocking = findings.some(f => f.severity === 'high' || f.severity === 'medium');
+
   const body = [
-    '## Salesforce PR Review',
+    `${mention}## Salesforce PR Review`,
     '',
     `Found **${findings.length}** issue(s): ${staticFindings} from static rules, ${aiFindings} from AI layer.`,
+    hasBlocking ? '**Changes requested** — please address the findings below before merging.' : '',
     '',
-    tableRows.length > 0 ? '### Findings outside the diff\n\n| Severity | Rule | Location | Message |\n|---|---|---|---|\n' + tableRows.join('\n') : '',
+    tableRows.length > 0 ? '### Findings outside the diff\n\n| Severity | Rule | Location | Message | Suggested fix |\n|---|---|---|---|---|\n' + tableRows.join('\n') : '',
     '',
     '---',
     '',
@@ -106,12 +113,10 @@ async function postReview({ owner, repo, prNumber, findings, changedFiles, aiErr
         : '_All findings from static rules. AI layer was skipped or found no issues._',
   ].filter(Boolean).join('\n');
 
-  // event: REQUEST_CHANGES if any high-severity, otherwise COMMENT
-  const hasHigh = findings.some(f => f.severity === 'high');
   await octokit.pulls.createReview({
     owner, repo, pull_number: prNumber,
     body,
-    event: hasHigh ? 'REQUEST_CHANGES' : 'COMMENT',
+    event: hasBlocking ? 'REQUEST_CHANGES' : 'COMMENT',
     comments: inlineComments,
   });
 }
@@ -120,6 +125,7 @@ async function main() {
   const owner = process.env.REPO_OWNER;
   const repo = process.env.REPO_NAME;
   const prNumber = parseInt(process.env.PR_NUMBER, 10);
+  const prAuthor = process.env.PR_AUTHOR || null;
 
   console.log(`Reviewing PR #${prNumber} on ${owner}/${repo}`);
 
@@ -145,7 +151,7 @@ async function main() {
     return a.startLine - b.startLine;
   });
 
-  await postReview({ owner, repo, prNumber, findings: allFindings, changedFiles, aiError });
+  await postReview({ owner, repo, prNumber, findings: allFindings, changedFiles, aiError, prAuthor });
   console.log('Review posted.');
 }
 
