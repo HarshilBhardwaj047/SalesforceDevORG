@@ -41,9 +41,13 @@ runs:
           exit 0
         fi
 
-        # Count <types> blocks (rough proxy for metadata types changed)
-        TYPES=$(grep -c "<name>" delta/package/package.xml || echo 0)
-        MEMBERS=$(grep -c "<members>" delta/package/package.xml || echo 0)
+        # Count <types> blocks (rough proxy for metadata types changed).
+        # `grep -c` already prints "0" on zero matches but still exits 1,
+        # so `|| echo 0` would append a second "0" line and produce a
+        # multi-line value that corrupts the GITHUB_OUTPUT write below.
+        # `|| true` just absorbs the exit code without adding output.
+        TYPES=$(grep -c "<name>" delta/package/package.xml || true)
+        MEMBERS=$(grep -c "<members>" delta/package/package.xml || true)
 
         if [ "$MEMBERS" -eq 0 ]; then
           echo "nothing_to_deploy=true" >> "$GITHUB_OUTPUT"

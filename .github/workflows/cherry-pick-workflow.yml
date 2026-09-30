@@ -10,7 +10,7 @@ on:
       - develop
 
 concurrency:
-  group: cherry-pick-${{ github.event.pull_request.number }}
+  group: cherry-pick-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+      actions: write
 
     steps:
       - name: Checkout repository with full history
@@ -43,7 +44,7 @@ jobs:
           set -euo pipefail
 
           if [ -z "$MERGE_SHA" ]; then
-            echo "::error::merge_commit_sha is empty — cannot cherry-pick." >&2
+            echo "::error::merge_commit_sha is empty -- cannot cherry-pick." >&2
             exit 1
           fi
 
@@ -65,7 +66,6 @@ jobs:
           echo "Parent count for $MERGE_SHA: $PARENT_COUNT"
 
           if [ "$PARENT_COUNT" -ge 2 ]; then
-            # Regular merge commit: use -m 1 to cherry-pick against the first (base) parent
             echo "Cherry-picking merge commit with -m 1"
             if ! git cherry-pick -m 1 -x "$MERGE_SHA"; then
               echo "::error::Conflict during cherry-pick of $MERGE_SHA. Aborting." >&2
@@ -73,7 +73,6 @@ jobs:
               exit 1
             fi
           else
-            # Squash merge: single-parent commit, cherry-pick directly
             echo "Cherry-picking squash-merge commit"
             if ! git cherry-pick -x "$MERGE_SHA"; then
               echo "::error::Conflict during cherry-pick of $MERGE_SHA. Aborting." >&2
@@ -88,3 +87,13 @@ jobs:
           TARGET_BRANCH: qa
         run: |
           git push origin "$TARGET_BRANCH"
+
+      - name: Trigger QA deployment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Pushes made with the default GITHUB_TOKEN do not trigger other
+          # workflows' `on: push` events (GitHub's anti-recursion guard),
+          # so the push above never fires sfqa.yml on its own. Dispatching
+          # it explicitly via the API is not subject to that restriction.
+          gh workflow run sfqa.yml --ref qa
