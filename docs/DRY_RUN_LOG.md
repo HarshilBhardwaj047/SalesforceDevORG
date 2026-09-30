@@ -329,12 +329,113 @@ fixed and closed:
 
 ---
 
-## Cumulative status after Dry Runs 1–7
+## PR #43 — stricter/more accurate static rules, blocking escalation, PR-author notification
+
+Feature request (not a bug fix): make the static rules engine stricter
+and more accurate, and notify the PR creator/owner directly when static
+analysis finds issues, with detailed errors and suggested fixes. Scope
+was agreed with the repo owner up front: tighten *existing* rules and
+escalate blocking behavior — not add new rule categories; notify via
+GitHub-native `@mention` in the review body — not Slack/email (no new
+secrets/infra needed; confirmed via `gh secret list` that only
+`ANTHROPIC_API_KEY` exists in this repo).
+
+Changes (`.github/scripts/rules/*`, `review.js`,
+`salesforce-pr-review.yml`):
+
+- New `utils/braces.js` (depth-aware brace matching) fixes SF-APEX-004 /
+  SF-APEX-006, which previously extracted a catch/method body with a
+  lazy `\{([\s\S]*?)\}` regex that truncated at the *first* `}` — a false
+  positive whenever the real `throw`/`try` sat after a nested block.
+- New `utils/loops.js` (nesting-aware loop-body tracking) fixes
+  SF-APEX-001 / SF-APEX-002, which previously used a flat brace counter
+  that decremented on *any* `}`, so a nested `if` closing before the
+  loop did caused a false negative (SOQL/DML inside the loop went
+  undetected).
+- SF-APEX-003: broadened the hardcoded-ID regex past the `"00"`-prefix
+  assumption, which missed most custom-object record IDs.
+- SF-SEC-001 / SF-SEC-002: fixed class-declaration matching to handle
+  `public with sharing class Foo` (the modifier/keyword gap regex
+  previously required `class` immediately after the modifier) and
+  scoped the sharing-keyword check to the actual modifier text instead
+  of scanning the whole preceding file.
+- SF-TRIG-001: strip block comments before counting trigger body lines
+  (a large `/* ... */` license header was inflating the count).
+- Every finding across all 5 rule files now carries a concrete
+  `suggestion` string.
+- `review.js`: `hasBlocking` now considers `high` **or** `medium`
+  severity (previously only `high`) → `event: 'REQUEST_CHANGES'`.
+  Medium-only PRs can no longer merge with just an advisory comment.
+- `review.js` + workflow: new `PR_AUTHOR` env var
+  (`github.event.pull_request.user.login`); review body now opens with
+  `@<author>` so the person who can act on the findings is notified
+  directly, on both the findings path and the AI-layer-failure path.
+
+Caught during its own dogfooding (PR #43 reviewing itself): SF-LWC-002
+flagged `.github/scripts/rules/lwc/index.js` itself as an LWC component,
+because the filter was a bare `/lwc/` substring + `.js` check. Fixed by
+requiring the actual bundle shape (`lwc/<bundleName>/<file>.js`);
+re-verified clean on the same PR. Merged (squash, admin override — same
+branch-protection situation as prior PRs).
+
+---
+
+## Dry Run 8 — verify tightened rules against the real bot (PR #44, closed unmerged)
+
+Purpose: confirm PR #43's changes actually behave as intended once
+deployed, not just in local Node tests. Built four throwaway fixtures on
+`test/DRYRUN-08-strict-rules-verification` off `develop`, each targeting
+specific rules — including the exact shapes that used to be
+false-positive/false-negative before PR #43:
+
+- `DryRun8TestClass.cls` — SOQL/DML inside a loop with a nested `if`
+  closing *before* the loop does (SF-APEX-001/002 true-positive check);
+  an 18-char custom-object ID (SF-APEX-003); a `catch` and an
+  `@AuraEnabled` method that both contain a nested block *followed by* a
+  `throw`/`try` (SF-APEX-004/006 false-positive check); declared
+  `public with sharing` (SF-SEC-002 false-negative check).
+- `DryRun8GlobalTestClass.cls` — `global` class with no sharing
+  declaration (SF-SEC-001/002 true-positive check).
+- `DryRun8Test.trigger` — 19-line body with inline SOQL and DML
+  (SF-TRIG-001/002/003).
+- `dryRun8Test.js` at a real `lwc/<bundle>/<file>.js` path — hardcoded
+  URL, `.then` with no `.catch`, and `document.querySelector`
+  (SF-LWC-001/002/003).
+
+Ran the rule modules locally first (`node -e ...` against each fixture)
+to predict expected findings, then opened PR #44 and compared against
+what the live `salesforce-pr-review.yml` run actually posted.
+
+| Check | Expected | Observed |
+|---|---|---|
+| Total finding count | 13 (5 apex + 2 sec + 3 trig + 3 lwc) | ✅ review body reported "Found **13** issue(s)" — exact match with local prediction |
+| SF-APEX-001/002 still fire despite nested `if` closing first | flagged | ✅ both flagged, at the SOQL/`update` lines |
+| SF-APEX-004/006 do **not** false-positive | zero findings | ✅ neither rule ID appears anywhere in the 13 findings |
+| SF-SEC-002 does not false-negative on `public with sharing` | zero findings on that class | ✅ confirmed — the only SEC findings are on the separate `global`, no-sharing class |
+| SF-SEC-001/002 fire on the `global` no-sharing class | 2 findings | ✅ both present |
+| SF-TRIG-001/002/003 fire | 3 findings | ✅ all present, including correct 19-line count |
+| SF-LWC-001/002/003 fire on a real bundle path | 3 findings | ✅ all present |
+| Every finding has a `_Suggested fix:_` line | 13/13 | ✅ confirmed in raw inline-comment bodies via `gh api .../pulls/44/comments` |
+| `@mention` addresses the actual PR author | `@HarshilBhardwaj047` | ✅ review body opens with it |
+| Blocking escalation | `high`/`medium` present → `REQUEST_CHANGES` | ✅ `state: "CHANGES_REQUESTED"` |
+| AI layer | still down (unrelated) | ⚠️ same credit-exhaustion error as before — expected, not a regression |
+
+Cleanup: PR #44 closed **without merging** (fixtures were throwaway, not
+real product code) with a comment summarizing the match. Branch
+`test/DRYRUN-08-strict-rules-verification` deleted locally and on
+origin.
+
+---
+
+## Cumulative status after Dry Runs 1–8
 
 | Capability | Status |
 |---|---|
 | `salesforce-pr-review.yml` (PR open/sync trigger) | ✅ works |
-| Static rules: Apex/security/trigger/LWC/metadata (15 of 15 rule IDs) | ✅ verified correct — SF-META-002 and SF-TRIG-002 fixed and re-verified in Dry Run 6 |
+| Static rules: Apex/security/trigger/LWC/metadata (15 of 15 rule IDs) | ✅ verified correct — SF-META-002/SF-TRIG-002 fixed in Dry Run 6; SF-APEX-001/002/003/004/006, SF-SEC-001/002, SF-TRIG-001, SF-LWC-001/002/003 tightened in PR #43 and re-verified live in Dry Run 8 |
+| Blocking escalation (`medium`+ → `REQUEST_CHANGES`) | ✅ verified live in Dry Run 8 |
+| PR-author `@mention` notification | ✅ verified live in Dry Run 8 (and on PR #43 itself) |
+| Per-finding suggested fixes | ✅ all 15 rule IDs now carry one; verified live in Dry Run 8 |
 | AI layer (Claude Sonnet review) | ⚠️ still down — credit exhausted (external/billing, not a code bug); failures now correctly surfaced instead of swallowed (#33 fixed) |
 | `cleanup-branches.yml` (dry-run mode) | ✅ works |
 | `first-run-baseline.yml` | ⚠️ still records `github.sha` rather than the checked-out `inputs.branch` HEAD for non-default branches — low priority, currently unconsumed by anything |
