@@ -99,4 +99,24 @@ public with sharing class AccountController {
             LIMIT 100
         ];
     }
+
+    /**
+     * Returns Accounts matching a given Industry picklist value.
+     * Blank/null industry returns an empty list rather than every Account,
+     * since "all accounts" is already covered by getTopAccounts.
+     */
+    @AuraEnabled(cacheable=true)
+    public static List<Account> getAccountsByIndustry(String industry) {
+        if (String.isBlank(industry)) {
+            return new List<Account>();
+        }
+        return [
+            SELECT Id, Name, Industry, CreatedDate
+            FROM Account
+            WHERE Industry = :industry
+            WITH USER_MODE
+            ORDER BY Name
+            LIMIT 200
+        ];
+    }
 }
