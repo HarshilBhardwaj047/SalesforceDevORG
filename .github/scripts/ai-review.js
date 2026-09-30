@@ -90,14 +90,14 @@ function safeRead(p) {
 async function runAiReview({ changedFiles, repoRoot }) {
   if (!process.env.ANTHROPIC_API_KEY) {
     console.log('ANTHROPIC_API_KEY not set — skipping AI review layer.');
-    return [];
+    return { findings: [], error: null };
   }
 
   // Guard 1: skip non-logic PRs
   const logicFiles = changedFiles.filter(f => isLogicFile(f.path) && !f.deleted);
   if (logicFiles.length === 0) {
     console.log('AI review: no logic files changed — skipping (cost guard 1).');
-    return [];
+    return { findings: [], error: null };
   }
 
   // Guard 5: collect at most MAX_CONTEXT_FILES related files
@@ -177,7 +177,7 @@ If you find no issues, return [].`;
     });
   } catch (err) {
     console.error(`AI review: API call failed — ${err.message}`);
-    return [];
+    return { findings: [], error: `API call failed — ${err.message}` };
   }
 
   console.log(`AI review: tokens used — input: ${response.usage?.input_tokens}, output: ${response.usage?.output_tokens}, cache_read: ${response.usage?.cache_read_input_tokens || 0}, cache_write: ${response.usage?.cache_creation_input_tokens || 0}`);
@@ -192,13 +192,14 @@ If you find no issues, return [].`;
   } catch (err) {
     console.error(`AI review: failed to parse response — ${err.message}`);
     console.error(`Raw response: ${text.slice(0, 500)}`);
-    return [];
+    return { findings: [], error: `Failed to parse model response — ${err.message}` };
   }
 
   // Validate shape
-  return findings.filter(f =>
+  const validated = findings.filter(f =>
     f && f.ruleId && f.severity && f.path && Number.isInteger(f.startLine) && f.message
   );
+  return { findings: validated, error: null };
 }
 
 function formatDiff(file) {

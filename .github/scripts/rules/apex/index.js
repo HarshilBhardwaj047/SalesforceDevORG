@@ -3,6 +3,8 @@
 //   (file, content) => Finding[]
 // Finding shape: { ruleId, severity, path, startLine, message, suggestion }
 
+const { findSoqlStartLines } = require('../../utils/soql');
+
 const RULES = [];
 
 function rule(ruleId, severity, fn) {
@@ -13,14 +15,14 @@ function rule(ruleId, severity, fn) {
 rule('SF-APEX-001', 'high', (path, content) => {
   const findings = [];
   const lines = content.split('\n');
-  let depth = 0;
+  const soqlStarts = new Set(findSoqlStartLines(lines));
   let inLoop = 0;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     // crude loop detection
     if (/\b(for|while)\s*\(/i.test(line)) inLoop++;
     if (line.includes('}') && inLoop > 0) inLoop = Math.max(0, inLoop - 1);
-    if (inLoop > 0 && /\[\s*SELECT\s+/i.test(line)) {
+    if (inLoop > 0 && soqlStarts.has(i)) {
       findings.push({
         startLine: i + 1,
         message: 'SOQL query inside a loop. Move the query outside the loop and process results in bulk.',
@@ -100,17 +102,13 @@ rule('SF-APEX-005', 'medium', (path, content) => {
   // Skip test classes
   if (/@\s*isTest/i.test(content)) return findings;
   const lines = content.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (/\[\s*SELECT\s+/i.test(line)) {
-      // Look at the same line AND the next 3 lines for the close bracket region
-      const region = lines.slice(i, Math.min(i + 6, lines.length)).join(' ');
-      if (!/WITH\s+(USER_MODE|SECURITY_ENFORCED|SYSTEM_MODE)/i.test(region)) {
-        findings.push({
-          startLine: i + 1,
-          message: 'SOQL query does not declare a security mode. Add WITH USER_MODE (or WITH SECURITY_ENFORCED) to enforce CRUD/FLS.',
-        });
-      }
+  for (const i of findSoqlStartLines(lines)) {
+    const region = lines.slice(i, Math.min(i + 6, lines.length)).join(' ');
+    if (!/WITH\s+(USER_MODE|SECURITY_ENFORCED|SYSTEM_MODE)/i.test(region)) {
+      findings.push({
+        startLine: i + 1,
+        message: 'SOQL query does not declare a security mode. Add WITH USER_MODE (or WITH SECURITY_ENFORCED) to enforce CRUD/FLS.',
+      });
     }
   }
   return findings;

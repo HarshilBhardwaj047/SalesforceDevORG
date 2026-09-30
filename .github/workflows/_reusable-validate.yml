@@ -73,13 +73,25 @@ jobs:
               --jq '.[0].headSha // empty')
             if [ -z "$LAST_SUCCESS" ]; then
               echo "No prior successful run found on ${{ github.ref_name }}"
-              # Fallback: merge-base with parent environment branch (covers first-run case)
-              PARENT=$(git merge-base HEAD origin/develop || git merge-base HEAD HEAD~1 || echo "")
-              if [ -z "$PARENT" ]; then
-                echo "::error::Cannot determine start commit. Run first-run-baseline workflow first."
-                exit 1
+              # Fallback for the first-ever run on this branch. `git merge-base
+              # HEAD origin/develop` is self-referential when HEAD already IS
+              # origin/develop (e.g. a push-to-develop trigger), which always
+              # resolves to HEAD itself and produces a guaranteed zero-diff.
+              # Prefer the push event's "before" SHA -- the real previous
+              # commit on this branch -- and only fall back to HEAD~1 when
+              # that isn't available (e.g. a brand-new branch, where "before"
+              # is the all-zeros SHA).
+              if [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+                PARENT="$BEFORE_SHA"
+                echo "Using push before-SHA: $PARENT"
+              else
+                PARENT=$(git rev-parse HEAD~1 2>/dev/null || echo "")
+                if [ -z "$PARENT" ]; then
+                  echo "::error::Cannot determine start commit. Run first-run-baseline workflow first."
+                  exit 1
+                fi
+                echo "Using HEAD~1 fallback: $PARENT"
               fi
-              echo "Using merge-base fallback: $PARENT"
               echo "sha=$PARENT" >> "$GITHUB_OUTPUT"
             else
               echo "Using last successful run: $LAST_SUCCESS"
@@ -88,6 +100,7 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+          BEFORE_SHA: ${{ github.event.before }}
 
       - name: Generate delta package
         id: delta

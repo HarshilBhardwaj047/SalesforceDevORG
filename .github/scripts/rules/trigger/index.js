@@ -1,5 +1,7 @@
 // rules/trigger/index.js
 
+const { findSoqlStartLines } = require('../../utils/soql');
+
 function check(filePath, content) {
   if (!filePath.endsWith('.trigger')) return [];
   const findings = [];
@@ -19,16 +21,14 @@ function check(filePath, content) {
   }
 
   // SF-TRIG-002: SOQL inside trigger body (almost always wrong)
-  for (let i = 0; i < lines.length; i++) {
-    if (/\[\s*SELECT\s+/i.test(lines[i])) {
-      findings.push({
-        ruleId: 'SF-TRIG-002',
-        severity: 'high',
-        path: filePath,
-        startLine: i + 1,
-        message: 'SOQL query inside a trigger. Move queries to the handler class for testability and bulkification.',
-      });
-    }
+  for (const i of findSoqlStartLines(lines)) {
+    findings.push({
+      ruleId: 'SF-TRIG-002',
+      severity: 'high',
+      path: filePath,
+      startLine: i + 1,
+      message: 'SOQL query inside a trigger. Move queries to the handler class for testability and bulkification.',
+    });
   }
 
   // SF-TRIG-003: DML inside trigger body
