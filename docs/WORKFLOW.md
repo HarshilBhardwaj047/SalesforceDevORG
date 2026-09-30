@@ -451,7 +451,38 @@ When a `pull_request` event fires, GitHub reads the workflow file from the
 
 ---
 
-### 4. `qa` force-reset procedure
+### 4. `master` vs `main` — two different branches with different jobs
+
+This repo has **both** a `master` branch and a separate `main` branch —
+they are not aliases of each other, and they serve different purposes:
+
+- **`master`** is the GitHub *default* branch, and is where the CI/CD
+  pipeline and PR-review-bot tooling itself is developed and released
+  (`.github/workflows/*`, `.github/scripts/*`, `docs/*`). It is **not**
+  wired to any Salesforce deployment trigger — no workflow in this repo
+  fires on push or PR to `master`. Verifying a change on `master` means
+  running it locally (`node --check`, direct rule-module invocation
+  against test fixtures), not watching a live Actions run.
+- **`main`**, together with `develop`, `qa`, and `stage`, are the
+  **protected branches mapped to real Salesforce orgs**. `sfprod.yml`
+  deploys on push to `main` (not `master`), and
+  `salesforce-pr-review.yml`'s PR trigger list is
+  `[develop, qa, stage, main]` — `master` is deliberately absent from it.
+
+Earlier sections of this document (the Branch Map in §1, §3, §6 Hotfix
+Flow, §8 Branch Protection, §10 CI/CD Summary) describe `master` as
+"Production, deployed by `sfprod.yml`." That reflects this repo's
+original branch model, before `main` was split out as the actual
+production-org branch. **Treat `main` as authoritative for anything
+touching live Salesforce deployments or the PR review bot's triggers;
+treat `master` as the branch for evolving the pipeline/tooling itself.**
+When in doubt about which branch a workflow actually fires on, check the
+workflow file's `on:` block directly rather than trusting the branch
+name's English meaning.
+
+---
+
+### 5. `qa` force-reset procedure
 
 When `qa` has fallen too far behind `develop` and cherry-picks are
 conflicting, reset `qa` to the correct baseline:
