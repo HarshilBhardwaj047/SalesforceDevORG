@@ -18,7 +18,10 @@ function parseUnifiedDiff(diffText) {
       }
     }
     return {
-      path: f.to || f.from,
+      // For deleted files, parse-diff sets `to` to '/dev/null' (from the
+      // diff's `+++ /dev/null` line) -- that's truthy, so it must be
+      // special-cased or the real path in `from` is never used.
+      path: f.deleted ? f.from : (f.to || f.from),
       from: f.from,
       to: f.to,
       deleted: f.deleted === true,
