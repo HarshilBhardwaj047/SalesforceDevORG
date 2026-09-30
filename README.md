@@ -38,6 +38,7 @@ This README covers setup from a fresh repo to first production deployment, a com
 | Weekly drift detection with auto-open **and auto-close** of issues | `drift-detection.yml` |
 | Deployment ledger committed to a separate branch | `_reusable-deploy.yml` (Record deployment step) |
 | Two-layer PR review bot — static rules + Claude Sonnet (skips Dependabot) | `.github/scripts/review.js`, `ai-review.js`, `rules/*` |
+| Medium+ severity findings block merge; PR author `@mention`ed directly in the review | `.github/scripts/review.js` |
 | Dynamic Apex test selection | `.github/scripts/GenerateSfdxCommand.js` |
 | Stale branch cleanup (runs live on schedule, dry-run on manual dispatch) | `cleanup-branches.yml` |
 | Auto cherry-pick Cherry-prefixed PRs from `develop` → `qa` | `cherry-pick-workflow.yml` |
@@ -645,13 +646,14 @@ On every PR opened or updated against `develop`, `qa`, `stage`, or `main`. Skips
 
 **Layer 1 — Static rules** (`.github/scripts/rules/`)
 
-Deterministic pattern-matching, 30+ rules. Fires regardless of API key:
+Deterministic pattern-matching, 16 rules across 5 categories. Fires regardless of API key. Every finding carries a concrete suggested fix, and loop/brace-nesting detection is depth-aware (a nested `if` inside a loop, or a `throw` after a nested block in a `catch`, no longer produces false positives/negatives):
 
 | Rule | What it catches |
 |---|---|
 | SF-APEX-001 | SOQL inside a for/while loop |
 | SF-APEX-002 | DML inside a for/while loop |
-| SF-APEX-004 | Silent exception swallowing (catch that only logs) |
+| SF-APEX-003 | Hardcoded Salesforce record ID (15/18-char literal) |
+| SF-APEX-004 | Silent exception swallowing (catch with no `throw`/`addError`) |
 | SF-APEX-005 | SOQL without `WITH USER_MODE` / `WITH SECURITY_ENFORCED` |
 | SF-APEX-006 | `@AuraEnabled` method without try/catch |
 | SF-TRIG-001 | Too much logic in trigger body |
@@ -693,22 +695,26 @@ The AI layer also automatically collects **context files** — if your PR change
 
 ### What a finding looks like
 
-The bot posts a single GitHub PR review with inline comments on diff lines:
+The bot posts a single GitHub PR review with inline comments on diff lines, and `@mention`s the PR author directly in the review body so the person who can act on it is notified — no Slack/email integration needed:
 
 ```
+@octocat ## Salesforce PR Review
+
 🔴 SF-APEX-001 — SOQL query inside a loop. Move the query outside
 the loop and process results in bulk.
 
-Suggestion: Query before the loop, then iterate over the result set.
+_Suggested fix:_ Query before the loop, then iterate over the result set.
 ```
 
-`🔴` high = REQUEST_CHANGES (PR cannot merge until fixed or dismissed).  
-`🟡` medium / `🔵` low = COMMENT only — informational, does not block merge.
+`🔴` high / `🟡` medium = **REQUEST_CHANGES** (PR cannot merge until fixed or dismissed).
+`🔵` low = COMMENT only — informational, does not block merge.
+
+Findings outside the diff (pre-existing issues in files the PR touches, but on lines it didn't change) are summarized in a table in the review body instead of inline, with a "Suggested fix" column.
 
 ### What it deliberately does NOT do
 
 - Never writes or suggests code (descriptions only)
-- Never requests changes for low/medium findings
+- Never requests changes when every finding is low-severity — medium and high both block merge
 - Never re-reviews on its own — push a new commit to trigger a new review
 - Never sees secrets
 
@@ -774,6 +780,10 @@ When a PR merged to `develop` has a title starting with "Cherry", its commit is 
 ### 10. `actions: read` permission on all validate callers
 
 The validate workflow uses the GitHub CLI (`gh run list`) to find the last successful run for delta calculation. This requires `actions: read`. All five caller workflows now declare this permission, ensuring the `gh` command works even in repositories with restricted default token permissions.
+
+### 11. Stricter static rules, blocking escalation, direct PR-author notification
+
+The static rules engine was hardened against several real false-positive/false-negative sources: lazy `{...}` regex extraction that truncated at the first nested closing brace (SF-APEX-004/006), a flat loop-brace counter that lost loop scope when a nested `if` closed first (SF-APEX-001/002), a hardcoded-ID regex that only matched the `"00"`-prefixed standard-object key prefix (SF-APEX-003), and a class-declaration regex that didn't match the conventional `public with sharing class Foo` form (SF-SEC-001/002). Every finding across all 16 rule IDs now carries a concrete suggested fix. Severity `medium` now escalates to `REQUEST_CHANGES` alongside `high` (previously only `high` blocked), and the review body opens with an `@mention` of the PR author — sourced from a `PR_AUTHOR` env var populated from `github.event.pull_request.user.login` — so the person who can act on the findings is notified directly, with no new webhook/secret infrastructure.
 
 ---
 
@@ -933,7 +943,10 @@ A team doing 50–100 PRs/week is looking at **$5–$15/week** for the AI layer.
 │   ├── GenerateSfdxCommand.js        # dynamic Apex test selection
 │   ├── package.json                  # bot dependencies
 │   ├── utils/diffParser.js           # PR diff parser
-│   └── rules/                        # static rules (apex, trigger, lwc, security, metadata)
+│   ├── utils/braces.js               # depth-aware brace matching (block-body extraction)
+│   ├── utils/loops.js                # nesting-aware loop-body detection (SOQL/DML-in-loop rules)
+│   ├── utils/soql.js                 # multi-line SOQL query detection
+│   └── rules/                        # static rules — 16 rule IDs (apex, trigger, lwc, security, metadata)
 ├── pre-deployment/                   # *.apex files run BEFORE every deploy
 └── post-deployment/                  # *.apex files run AFTER every deploy
 
