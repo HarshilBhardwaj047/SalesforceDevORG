@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+      actions: write
 
     steps:
       - name: Checkout repository with full history
@@ -86,3 +87,13 @@ jobs:
           TARGET_BRANCH: qa
         run: |
           git push origin "$TARGET_BRANCH"
+
+      - name: Trigger QA deployment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Pushes made with the default GITHUB_TOKEN do not trigger other
+          # workflows' `on: push` events (GitHub's anti-recursion guard),
+          # so the push above never fires sfqa.yml on its own. Dispatching
+          # it explicitly via the API is not subject to that restriction.
+          gh workflow run sfqa.yml --ref qa
